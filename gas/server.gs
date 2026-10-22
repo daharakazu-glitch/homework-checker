@@ -1,6 +1,8 @@
 /**
  * 提出物チェッカー（英語課題・複数クラス対応）
- * Googleスプレッドシートにバインドして使う Apps Script です。
+ * ウェブアプリとしてデプロイすると、同じGoogleアカウントならどの端末からでも同じデータを使えます。
+ * データは自動で作成するスプレッドシート「提出物チェッカー データ」に保存します。
+ * （スプレッドシートにバインドした場合は、そのスプレッドシートに保存します。）
  *
  * シート構成
  *   設定   : A列=クラス名, B列=人数（2行目から最大10クラス）
@@ -28,15 +30,15 @@ function onOpen() {
 
 function openChecker() {
   ensureBaseSheets_();
-  const html = HtmlService.createHtmlOutputFromFile('index')
+  const html = HtmlService.createHtmlOutput(APP_HTML)
     .setWidth(1200)
     .setHeight(820);
   SpreadsheetApp.getUi().showModalDialog(html, '提出物チェッカー');
 }
 
-// URL から直接開きたい場合（ウェブアプリとしてデプロイしたとき）
+// ウェブアプリとして開いたとき
 function doGet() {
-  return HtmlService.createHtmlOutputFromFile('index')
+  return HtmlService.createHtmlOutput(APP_HTML)
     .setTitle('提出物チェッカー')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
@@ -83,7 +85,7 @@ function getData() {
     }
     return { name: c.name, count: c.count, names: names };
   });
-  return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks };
+  return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl() };
 }
 
 function setCheck(clsName, taskId, no, on) {
@@ -181,7 +183,7 @@ function saveClasses(list) {
 }
 
 function setMode(mode) {
-  PropertiesService.getDocumentProperties().setProperty('mode', mode === 'single' ? 'single' : 'multi');
+  props_().setProperty('mode', mode === 'single' ? 'single' : 'multi');
   return true;
 }
 
@@ -224,15 +226,34 @@ function importState(state) {
 }
 
 // ===== シート操作 =====
-function ss_() { return SpreadsheetApp.getActiveSpreadsheet(); }
+// バインドされていればそのスプレッドシート、そうでなければ自動作成したデータ用スプレッドシートを使う
+function ss_() {
+  if (ss_.cache) return ss_.cache;
+  let ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    const props = PropertiesService.getScriptProperties();
+    const id = props.getProperty('SPREADSHEET_ID');
+    if (id) {
+      try { ss = SpreadsheetApp.openById(id); } catch (e) { ss = null; }
+    }
+    if (!ss) {
+      ss = SpreadsheetApp.create('提出物チェッカー データ');
+      props.setProperty('SPREADSHEET_ID', ss.getId());
+    }
+  }
+  ss_.cache = ss;
+  return ss;
+}
+
+function props_() { return PropertiesService.getDocumentProperties() || PropertiesService.getScriptProperties(); }
 
 function withLock_(fn) {
-  const lock = LockService.getDocumentLock();
+  const lock = LockService.getDocumentLock() || LockService.getScriptLock();
   lock.waitLock(20000);
   try { return fn(); } finally { lock.releaseLock(); }
 }
 
-function getMode_() { return PropertiesService.getDocumentProperties().getProperty('mode') || ''; }
+function getMode_() { return props_().getProperty('mode') || ''; }
 
 function ensureBaseSheets_() {
   const ss = ss_();

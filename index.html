@@ -143,6 +143,8 @@ table.list th, table.list td { border-bottom: 1px solid var(--line); padding: 6p
 <body>
 <header class="noprint">
   <h1>提出物チェッカー</h1>
+  <span id="syncState" class="muted hidden" style="margin-left:auto;order:3"></span>
+  <button class="btn small hidden" id="btnRefresh" style="order:4" title="ほかの端末で入力した内容を読み込みます">↻ 最新に更新</button>
   <nav id="nav">
     <button data-view="status">回収状況</button>
     <button data-view="check">チェック入力</button>
@@ -290,15 +292,41 @@ function normalize(s) {
   s.checks = s.checks || {};
   return s;
 }
+let pending = 0;
+function showSync() {
+  if (!IS_GAS) return;
+  const el = $('#syncState');
+  el.classList.remove('hidden');
+  el.textContent = pending ? '保存中…' : '✓ 保存済み';
+}
 async function persist(gasFn, ...args) {
   if (!IS_GAS) { saveLocal(); return; }
+  pending++; showSync();
   try { await gas(gasFn, ...args); }
-  catch (e) { toast('スプレッドシートへの保存に失敗しました：' + (e && e.message || e)); await reload(); }
+  catch (e) { toast('保存に失敗しました：' + (e && e.message || e)); pending--; await reload(); return; }
+  pending--; showSync();
 }
-async function reload() {
+async function reload(quiet) {
+  if (IS_GAS && quiet) { $('#syncState').textContent = '更新中…'; }
   try { state = normalize(IS_GAS ? await gas('getData') : loadLocal()); }
-  catch (e) { $('#loading').textContent = '読み込みに失敗しました：' + (e && e.message || e); $('#loading').classList.remove('hidden'); return; }
-  render();
+  catch (e) {
+    if (quiet) { toast('最新の内容を読み込めませんでした'); showSync(); return; }
+    $('#loading').textContent = '読み込みに失敗しました：' + (e && e.message || e); $('#loading').classList.remove('hidden'); return;
+  }
+  // 入力途中の画面はそのままにする
+  if (quiet && ui.view === 'tasks' && (ui.editing || ui.openRoster !== null)) { showSync(); return; }
+  if (quiet) ui.classDraft = null;
+  render(); showSync();
+}
+// ほかの端末で入力した内容を、画面に戻ってきたときに読み込む
+if (IS_GAS) {
+  $('#btnRefresh').classList.remove('hidden');
+  $('#btnRefresh').onclick = () => { if (!pending) reload(true); };
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 30000 && !pending) reload(true);
+  });
 }
 
 function setCheck(cls, id, no, on, recordUndo = true) {
@@ -755,16 +783,18 @@ function renderTasks() {
         <button class="btn primary" id="cSave">クラス設定を保存</button>
         <span class="muted">最大${MAX_CLASSES}クラス、1クラス${MAX_STUDENTS}人まで。</span>
       </div>
-      ${IS_GAS ? '<p class="muted">保存すると「設定」シートとクラスごとのシートに反映されます。シートを直接編集した場合は、メニュー「⚙ 提出物チェッカー」→「クラスシートを生成」を実行してから、この画面を開き直してください。</p>' : ''}
+      ${IS_GAS ? '<p class="muted">保存すると「設定」シートとクラスごとのシートに反映されます。「設定」シートを直接編集した場合は、「↻ 最新に更新」を押すとクラスシートが作られ、画面に反映されます。</p>' : ''}
     </div>
 
     <div class="card">
       <h2>データ</h2>
-      <p class="muted">${IS_GAS ? 'データはこのスプレッドシートの中だけに保存されます。外部へ送信することはありません。'
+      <p class="muted">${IS_GAS ? 'データはあなたのGoogleドライブのスプレッドシートに保存されます。同じGoogleアカウントなら、どの端末からでも同じデータを使えます。外部へ送信することはありません。'
         : 'データはこの端末のブラウザの中だけに保存されます。外部へ送信することはありません。端末を替えるときやブラウザのデータを消す前に、バックアップを保存してください。'}</p>
+      ${!IS_GAS ? '<p class="muted"><b>複数の端末で同じデータを使いたい場合</b>は、<a href="setup.html" target="_blank" rel="noopener">Googleアカウントで同期する設定</a>（初回だけ・約5分）をしてください。このブラウザのデータは「バックアップを保存」→ 同期版で「バックアップから復元」で引き継げます。</p>' : ''}
+      ${IS_GAS && state.sheetUrl ? `<p><a href="${esc(state.sheetUrl)}" target="_blank" rel="noopener">データのスプレッドシートを開く</a></p>` : ''}
       <div class="row">
-        ${IS_GAS ? '' : `<button class="btn" id="dBackup">バックアップを保存</button>
-        <label class="btn">バックアップから復元<input type="file" id="dRestore" accept=".json,application/json" class="hidden"></label>`}
+        <button class="btn" id="dBackup">バックアップを保存</button>
+        <label class="btn">バックアップから復元<input type="file" id="dRestore" accept=".json,application/json" class="hidden"></label>
         <button class="btn" id="dSample">サンプルデータを入れる</button>
         <button class="btn danger" id="dReset">サンプルデータを消して初期化</button>
       </div>
@@ -885,7 +915,6 @@ function renderHelp() {
     <ol>
       <li>「提出物」画面の下にある「クラス設定」で、クラス名と人数を入れて「クラス設定を保存」を押します（最大${MAX_CLASSES}クラス、1クラス${MAX_STUDENTS}人まで）。</li>
       <li>名前は入れなくても使えます。出席番号だけで、チェック・声かけ・印刷まで動きます。</li>
-      ${IS_GAS ? '<li>スプレッドシートの「設定」シートに直接入力した場合は、メニュー「⚙ 提出物チェッカー」→「クラスシートを生成」を実行します。</li>' : ''}
     </ol>
     <h3>提出物を登録する</h3>
     <ol>
@@ -912,7 +941,7 @@ function renderHelp() {
     </ul>
     <h3>安心して使うために</h3>
     <ul>
-      <li>データは${IS_GAS ? 'このスプレッドシート' : 'この端末のブラウザ'}の中だけに保存し、外部へは送りません。</li>
+      <li>データは${IS_GAS ? 'あなたのGoogleドライブのスプレッドシート' : 'この端末のブラウザ'}の中だけに保存し、外部へは送りません。${IS_GAS ? '同じGoogleアカウントなら、パソコン・iPadなどどの端末からでも同じデータを使えます。ほかの端末で入力した内容は「↻ 最新に更新」で読み込めます。' : '複数の端末で使うには <a href="setup.html" target="_blank" rel="noopener">Googleアカウントで同期する設定</a> をしてください。'}</li>
       <li>評価や点数を書く欄はありません。記録するのは「出したか、まだか」だけです。</li>
       <li>名前を入れるかどうかは、学校のルールに合わせて判断してください。</li>
     </ul>
@@ -926,9 +955,9 @@ document.querySelectorAll('#modeDlg [data-mode]').forEach((b) => b.onclick = asy
   if (!state.classes.length) { ui.view = 'tasks'; toast('まず、クラス名と人数を登録してください'); }
   render();
 });
-$('#storageNote').textContent = IS_GAS
-  ? 'データはこのスプレッドシートの中だけに保存されます。'
-  : 'データはこの端末のこのブラウザの中だけに保存され、外部へは送信されません。いつも同じ端末・同じブラウザで開いてください。';
+$('#storageNote').innerHTML = IS_GAS
+  ? 'データはあなたのGoogleドライブのスプレッドシートに保存されます。同じGoogleアカウントなら、どの端末からでも同じデータを使えます。'
+  : 'この画面で入力したデータは、この端末のこのブラウザの中だけに保存されます。複数の端末で使いたい場合は <a href="setup.html" target="_blank" rel="noopener">Googleアカウントで同期する設定</a> をしてください。';
 reload();
 </script>
 </body>
