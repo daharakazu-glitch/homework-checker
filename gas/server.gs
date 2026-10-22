@@ -32,7 +32,7 @@ function onOpen() {
 
 function openChecker() {
   ensureBaseSheets_();
-  const html = HtmlService.createHtmlOutput(APP_HTML)
+  const html = HtmlService.createHtmlOutput(appHtml_())
     .setWidth(1200)
     .setHeight(820);
   SpreadsheetApp.getUi().showModalDialog(html, '提出物チェッカー');
@@ -40,7 +40,7 @@ function openChecker() {
 
 // ウェブアプリとして開いたとき
 function doGet() {
-  return HtmlService.createHtmlOutput(APP_HTML)
+  return HtmlService.createHtmlOutput(appHtml_())
     .setTitle('提出物チェッカー')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
@@ -291,6 +291,12 @@ function importState(state) {
     });
   });
   return getData();
+}
+
+// 画面（index.html）は、ファイルを小さくするため圧縮して埋め込んでいる（APP_HTML_GZ）
+function appHtml_() {
+  const blob = Utilities.newBlob(Utilities.base64Decode(APP_HTML_GZ), 'application/x-gzip');
+  return Utilities.ungzip(blob).getDataAsString('UTF-8');
 }
 
 // ===== シート操作 =====
