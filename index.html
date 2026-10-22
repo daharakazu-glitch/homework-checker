@@ -673,7 +673,7 @@ function renderPrint() {
     const slips = targets.map(({ n, miss }) => `<div class="slip"><h3>${esc(c.name)}　${esc(stuLabel(c, n))}さんへ</h3>
       <div class="foot">${nowTxt}、まだ確認できていない提出物です。</div>
       ${miss.length ? `<ul>${miss.map((t) => `<li>${esc(t.name)}${t.due ? `（締切 ${md(t.due)}）` : ''}</li>`).join('')}</ul>` : '<p>すべて提出済みです。ありがとう！</p>'}
-      <div class="foot">提出したら先生に声をかけてください。行き違いで提出済みの場合も教えてください。</div></div>`);
+      <div class="foot">提出したら先生に声をかけてください。行き違いで提出済みの場合も教えてください。提出できない場合は放課後残ってやっていってください。</div></div>`);
     if (!slips.length) pages = '<div class="page"><p>未提出のある生徒はいません。</p></div>';
     for (let i = 0; i < slips.length; i += 4) pages += `<div class="page">${slips.slice(i, i + 4).join('')}</div>`;
   } else {
