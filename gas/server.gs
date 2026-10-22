@@ -16,6 +16,8 @@ const ID_MARK = '#ID';
 const MAX_CLASSES = 10;
 const MAX_STUDENTS = 45;
 const TASK_HEADERS = ['ID', '提出物名', '対象クラス', '伝えた日', '締切', '作成日時'];
+const MAIL_MARK = '#MAIL';
+const SHEET_MAILLOG = 'メール送信記録';
 
 // ===== メニュー =====
 function onOpen() {
@@ -76,6 +78,9 @@ function getData() {
     const vals = sh.getRange(1, 1, c.count + 2, Math.max(lastCol, 2)).getValues();
     const names = [];
     for (let r = 2; r < c.count + 2; r++) names.push(String(vals[r][1] || '').trim());
+    const mailCol = vals[1].indexOf(MAIL_MARK);
+    const emails = [];
+    for (let r = 2; r < c.count + 2; r++) emails.push(mailCol >= 0 ? String(vals[r][mailCol] || '').trim() : '');
     for (let col = 2; col < vals[1].length; col++) {
       const id = String(vals[1][col] || '');
       if (!checks[id]) continue;
@@ -83,7 +88,8 @@ function getData() {
       for (let r = 2; r < c.count + 2; r++) if (String(vals[r][col]).trim() !== '') m[r - 1] = true;
       checks[id][c.name] = m;
     }
-    return { name: c.name, count: c.count, names: names };
+    const last = props_().getProperty('lastMail:' + c.name);
+    return { name: c.name, count: c.count, names: names, emails: emails, lastMail: last ? JSON.parse(last) : null };
   });
   return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl() };
 }
@@ -172,14 +178,54 @@ function saveClasses(list) {
 
     list.forEach(function (c) {
       const sh = ensureClassSheet_(c.name, c.count, tasks);
-      const names = [];
-      for (let i = 0; i < c.count; i++) names.push([String((c.names || [])[i] || '').trim()]);
-      sh.getRange(3, 2, c.count, 1).setValues(names);
+      writeRoster_(sh, c);
       const last = sh.getLastRow();
       if (last > c.count + 2) sh.getRange(c.count + 3, 1, last - c.count - 2, sh.getLastColumn()).clearContent();
     });
   });
   return getData();
+}
+
+// 未提出の生徒へ一人ずつメールを送る（mails: [{no, to, subject, body}]）
+function sendReminders(clsName, mails) {
+  if (!mails || !mails.length) throw new Error('送信対象がいません');
+  const remaining = MailApp.getRemainingDailyQuota();
+  if (mails.length > remaining) throw new Error('今日送れるメールはあと' + remaining + '通です（Googleの1日の上限）。人数を減らすか、明日送ってください。');
+  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const log = [];
+  const failed = [];
+  let sent = 0;
+  mails.forEach(function (m) {
+    const to = String(m.to || '').trim();
+    let result = '送信済み';
+    try {
+      if (!re.test(to)) throw new Error('メールアドレスの形が正しくありません');
+      MailApp.sendEmail({ to: to, subject: String(m.subject).slice(0, 200), body: String(m.body) });
+      sent++;
+    } catch (e) {
+      result = '失敗：' + e.message;
+      failed.push({ no: m.no, to: to, error: e.message });
+    }
+    log.push([new Date(), clsName, m.no, to, m.subject, result]);
+  });
+  withLock_(function () {
+    let sh = ss_().getSheetByName(SHEET_MAILLOG);
+    if (!sh) {
+      sh = ss_().insertSheet(SHEET_MAILLOG);
+      sh.getRange(1, 1, 1, 6).setValues([['送信日時', 'クラス', '番号', '宛先', '件名', '結果']]).setFontWeight('bold');
+      sh.setFrozenRows(1);
+    }
+    sh.getRange(sh.getLastRow() + 1, 1, log.length, 6).setValues(log);
+  });
+  const lastMail = { at: Date.now(), sent: sent };
+  props_().setProperty('lastMail:' + clsName, JSON.stringify(lastMail));
+  return { sent: sent, failed: failed, remaining: MailApp.getRemainingDailyQuota(), lastMail: lastMail };
+}
+
+// メール送信の許可を出すため、エディタで一度だけ実行する
+function authorize() {
+  ss_();
+  Logger.log('許可が完了しました。今日送れるメールはあと ' + MailApp.getRemainingDailyQuota() + ' 通です。');
 }
 
 function setMode(mode) {
@@ -192,7 +238,7 @@ function importState(state) {
     ensureBaseSheets_();
     const ss = ss_();
     const list = validateClasses_((state.classes || []).map(function (c) {
-      return { name: c.name, count: c.count, names: c.names || [] };
+      return { name: c.name, count: c.count, names: c.names || [], emails: c.emails || [] };
     }));
     // 既存のクラスシートを削除（シートが1枚だけにならないよう、基本シートは残る）
     classSheets_().forEach(function (sh) { ss.deleteSheet(sh); });
@@ -208,9 +254,7 @@ function importState(state) {
     const checks = state.checks || {};
     list.forEach(function (c) {
       const sh = ensureClassSheet_(c.name, c.count, tasks);
-      const names = [];
-      for (let i = 0; i < c.count; i++) names.push([String((c.names || [])[i] || '').trim()]);
-      sh.getRange(3, 2, c.count, 1).setValues(names);
+      writeRoster_(sh, c);
       const map = colMap_(sh);
       tasks.forEach(function (t) {
         const col = map[t.id];
@@ -360,8 +404,9 @@ function ensureClassSheet_(name, count, tasks) {
   let sh = ss.getSheetByName(name);
   if (!sh) {
     sh = ss.insertSheet(name);
-    sh.getRange('A1:B2').setValues([['番号', '氏名（任意）'], [ID_MARK, '']]);
-    sh.getRange('A1:B1').setFontWeight('bold');
+    sh.getRange('A1:C2').setValues([['番号', '氏名（任意）', 'メール（任意）'], [ID_MARK, '', MAIL_MARK]]);
+    sh.getRange('A1:C1').setFontWeight('bold');
+    sh.setColumnWidth(3, 200);
     sh.hideRows(2);
     sh.setFrozenRows(2);
     sh.setFrozenColumns(2);
@@ -369,6 +414,13 @@ function ensureClassSheet_(name, count, tasks) {
     sh.setColumnWidth(2, 120);
   } else if (!isClassSheet_(sh)) {
     throw new Error('「' + name + '」という名前の別のシートがあります。クラス名を変えるか、そのシートの名前を変えてください。');
+  }
+  // 以前の版で作ったシートには、氏名の右にメール列を追加する
+  if (sh.getRange(2, 1, 1, Math.max(sh.getLastColumn(), 2)).getValues()[0].indexOf(MAIL_MARK) < 0) {
+    sh.insertColumnAfter(2);
+    sh.getRange(1, 3, 2, 1).setValues([['メール（任意）'], [MAIL_MARK]]);
+    sh.getRange(1, 3).setFontWeight('bold');
+    sh.setColumnWidth(3, 200);
   }
   if (sh.getMaxRows() < count + 2) sh.insertRowsAfter(sh.getMaxRows(), count + 2 - sh.getMaxRows());
   const nums = [];
@@ -379,6 +431,17 @@ function ensureClassSheet_(name, count, tasks) {
     if (t.classes.indexOf(name) >= 0 && !map[t.id]) map[t.id] = addTaskColumn_(sh, t);
   });
   return sh;
+}
+
+function writeRoster_(sh, c) {
+  const mailCol = sh.getRange(2, 1, 1, sh.getLastColumn()).getValues()[0].indexOf(MAIL_MARK) + 1;
+  const names = [], emails = [];
+  for (let i = 0; i < c.count; i++) {
+    names.push([String((c.names || [])[i] || '').trim()]);
+    emails.push([String((c.emails || [])[i] || '').trim()]);
+  }
+  sh.getRange(3, 2, c.count, 1).setValues(names);
+  if (mailCol > 0) sh.getRange(3, mailCol, c.count, 1).setValues(emails);
 }
 
 function validateClasses_(list) {
@@ -392,6 +455,6 @@ function validateClasses_(list) {
     if (!(count >= 1 && count <= MAX_STUDENTS)) throw new Error('人数は1〜' + MAX_STUDENTS + '人で入力してください');
     if (seen[name]) throw new Error('同じクラス名があります：' + name);
     seen[name] = true;
-    return { name: name, count: count, names: c.names || [], oldName: c.oldName ? String(c.oldName) : '' };
+    return { name: name, count: count, names: c.names || [], emails: c.emails || [], oldName: c.oldName ? String(c.oldName) : '' };
   });
 }
