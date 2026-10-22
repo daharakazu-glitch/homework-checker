@@ -15,7 +15,10 @@ const out = `// 提出物チェッカー（Google Apps Script 用・1ファイ�
 ${server.trimEnd()}
 
 // ===== 画面（index.html の内容） =====
-const APP_HTML = ${JSON.stringify(html)};
+// 貼り付けで途切れないよう、1行ずつの文字列に分けている
+const APP_HTML = [
+${html.split('\n').map((l) => '  ' + JSON.stringify(l)).join(',\n')}
+].join('\\n');
 `;
 
 fs.writeFileSync(path.join(root, 'gas/teishutsu-checker.gs'), out);
