@@ -1,7 +1,9 @@
 /**
  * 提出物チェッカー（英語課題・複数クラス対応）
  * ウェブアプリとしてデプロイすると、同じGoogleアカウントならどの端末からでも同じデータを使えます。
- * データは自動で作成するスプレッドシート「提出物チェッカー データ」に保存します。
+ * 「ウェブアプリにアクセスしているユーザー」として実行するようにデプロイすれば、1つのURLを複数の先生で使えます。
+ * データは先生ごとに、その先生のドライブに自動で作成するスプレッドシート「提出物チェッカー データ」に保存し、
+ * 保存先などの設定は先生ごとのユーザープロパティに記録します。メールもその先生のGmailから送ります。
  * （スプレッドシートにバインドした場合は、そのスプレッドシートに保存します。）
  *
  * シート構成
@@ -91,7 +93,7 @@ function getData() {
     const last = props_().getProperty('lastMail:' + c.name);
     return { name: c.name, count: c.count, names: names, emails: emails, lastMail: last ? JSON.parse(last) : null, mailStop: getMailStop_(c.name) };
   });
-  return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl() };
+  return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl(), user: userEmail_() };
 }
 
 function setCheck(clsName, taskId, no, on) {
@@ -300,13 +302,13 @@ function appHtml_() {
 }
 
 // ===== シート操作 =====
-// バインドされていればそのスプレッドシート、そうでなければ自動作成したデータ用スプレッドシートを使う
+// バインドされていればそのスプレッドシート、そうでなければ先生ごとに自動作成したデータ用スプレッドシートを使う
 function ss_() {
   if (ss_.cache) return ss_.cache;
   let ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
-    const props = PropertiesService.getScriptProperties();
-    const id = props.getProperty('SPREADSHEET_ID');
+    const props = PropertiesService.getUserProperties();
+    const id = props.getProperty('SPREADSHEET_ID') || migrateFromScriptProps_();
     if (id) {
       try { ss = SpreadsheetApp.openById(id); } catch (e) { ss = null; }
     }
@@ -319,10 +321,38 @@ function ss_() {
   return ss;
 }
 
-function props_() { return PropertiesService.getDocumentProperties() || PropertiesService.getScriptProperties(); }
+// 以前の版（1人で使う版）は、保存先などをスクリプト全体の設定に記録していた。
+// データ用スプレッドシートの持ち主本人が開いたときだけ、その人の設定に引き継ぐ（ほかの先生には引き継がない）
+function migrateFromScriptProps_() {
+  const sp = PropertiesService.getScriptProperties();
+  const id = sp.getProperty('SPREADSHEET_ID');
+  if (!id) return null;
+  try {
+    const owner = SpreadsheetApp.openById(id).getOwner();
+    const me = userEmail_();
+    if (!owner || !me || owner.getEmail() !== me) return null;
+  } catch (e) {
+    return null;
+  }
+  PropertiesService.getUserProperties().setProperties(sp.getProperties());
+  sp.deleteAllProperties();
+  return id;
+}
+
+function userEmail_() {
+  try { return Session.getEffectiveUser().getEmail(); } catch (e) { return ''; }
+}
+
+// 設定（使い方・メール停止・前回送信）の保存先。ウェブアプリでは先生ごとに分ける
+function props_() {
+  const doc = PropertiesService.getDocumentProperties();
+  if (doc) return doc;
+  ss_(); // 以前の版の設定があれば、先に引き継いでおく
+  return PropertiesService.getUserProperties();
+}
 
 function withLock_(fn) {
-  const lock = LockService.getDocumentLock() || LockService.getScriptLock();
+  const lock = LockService.getDocumentLock() || LockService.getUserLock();
   lock.waitLock(20000);
   try { return fn(); } finally { lock.releaseLock(); }
 }
