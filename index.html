@@ -168,6 +168,7 @@ table.list th, table.list td { border-bottom: 1px solid var(--line); padding: 6p
     <button class="btn choice" data-mode="single"><b>1クラスで使う</b><span class="muted">担任クラスなど、1クラスの提出物を管理します</span></button>
     <button class="btn choice" data-mode="multi"><b>複数クラスで使う</b><span class="muted">教科担任として、担当する複数クラスを行き来します</span></button>
     <button class="btn choice" data-mode="sample"><b>サンプルで試してみる</b><span class="muted">架空の3クラスと英語の提出物で画面を確認します（あとで初期化できます）</span></button>
+    <p class="muted" id="storageNote" style="margin:14px 0 0"></p>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -262,6 +263,18 @@ function gas(fn, ...args) {
 function loadLocal() {
   try { const d = JSON.parse(localStorage.getItem(LS_KEY)); if (d && Array.isArray(d.classes)) return d; } catch (e) {}
   return emptyState();
+}
+const LS_BACKUP = 'teishutsu-checker-lastbackup';
+function lastBackupDays() {
+  try { const t = +localStorage.getItem(LS_BACKUP); return t ? Math.floor((Date.now() - t) / 86400000) : null; } catch (e) { return null; }
+}
+function backupBanner() {
+  if (IS_GAS || !state.tasks.length) return '';
+  const d = lastBackupDays();
+  if (d !== null && d < 14) return '';
+  return `<div class="card noprint" style="border-color:var(--c-few);background:var(--c-few-bg)">
+    <div class="row" style="justify-content:space-between"><span style="font-size:13px">データはこのブラウザの中だけに保存されています。${d === null ? 'まだバックアップがありません。' : `最後のバックアップから${d}日たちました。`}端末の故障やブラウザのデータ消去に備えて、「提出物」画面の下にある「バックアップを保存」をおすすめします。</span>
+    <button class="btn small" data-go="tasks">バックアップへ</button></div></div>`;
 }
 function saveLocal() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) { toast('この端末に保存できませんでした'); }
@@ -421,7 +434,7 @@ function renderStatus() {
     missing: (a, b) => b.miss.length - a.miss.length || ci(a) - ci(b),
   };
   list.sort(sorters[ui.sort]);
-  el.innerHTML = `
+  el.innerHTML = backupBanner() + `
     <div class="card">
       <h2>今日が締切の提出物（${md(today)}）</h2>
       ${todays.length ? `<div class="cards">${todays.map(cardHtml).join('')}</div>` : '<p class="muted">今日が締切の提出物はありません。</p>'}
@@ -838,6 +851,7 @@ function renderTasks() {
     const blob = new Blob([JSON.stringify(state, null, 1)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `提出物チェッカー_${todayStr()}.json`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    try { localStorage.setItem(LS_BACKUP, String(Date.now())); } catch (e) {}
   };
   if ($('#dRestore')) $('#dRestore').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -912,6 +926,9 @@ document.querySelectorAll('#modeDlg [data-mode]').forEach((b) => b.onclick = asy
   if (!state.classes.length) { ui.view = 'tasks'; toast('まず、クラス名と人数を登録してください'); }
   render();
 });
+$('#storageNote').textContent = IS_GAS
+  ? 'データはこのスプレッドシートの中だけに保存されます。'
+  : 'データはこの端末のこのブラウザの中だけに保存され、外部へは送信されません。いつも同じ端末・同じブラウザで開いてください。';
 reload();
 </script>
 </body>
