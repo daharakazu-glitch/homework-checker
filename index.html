@@ -190,7 +190,7 @@ let ui = {
   view: 'status', cls: null,
   sort: 'due', filterCls: '', hideDone: false,
   chkHideDone: false, onlyMissing: false, quickTask: null, lastMsg: '', focusQuick: false,
-  callCls: '', overdueOnly: false, mailSubject: '提出物の確認のお願い',
+  callCls: '', overdueOnly: false, mailSubject: '提出物の確認のお願い', mailSkip: {}, mailOpen: null,
   printType: 'class', printCls: null, printStu: 'all', printNames: false, blankCols: 10, blankTitle: '',
   editing: null, classDraft: null, openRoster: null,
 };
@@ -300,7 +300,8 @@ function normalize(s) {
     const count = Math.max(1, Math.min(MAX_STUDENTS, parseInt(c.count, 10) || 1));
     const names = Array.from({ length: count }, (_, i) => String((c.names || [])[i] || '').trim());
     const emails = Array.from({ length: count }, (_, i) => String((c.emails || [])[i] || '').trim());
-    return { name: String(c.name).trim(), count, names, emails, lastMail: c.lastMail || null };
+    const mailStop = (c.mailStop || []).map(Number).filter((n) => n >= 1 && n <= count);
+    return { name: String(c.name).trim(), count, names, emails, lastMail: c.lastMail || null, mailStop };
   });
   s.tasks = (s.tasks || []).map((t) => ({ id: t.id, name: t.name, classes: t.classes || [], told: t.told || '', due: t.due || '', created: Number(t.created) || 0 }));
   s.checks = s.checks || {};
@@ -380,7 +381,10 @@ async function saveClasses(list) {
       for (const c of list) if (c.oldName && old[c.oldName]) next[c.name] = old[c.oldName];
       state.checks[id] = next;
     }
-    state.classes = list.map((c) => ({ name: c.name, count: c.count, names: c.names, emails: c.emails }));
+    state.classes = list.map((c) => {
+      const old = c.oldName ? getCls(c.oldName) : null;
+      return { name: c.name, count: c.count, names: c.names, emails: c.emails, mailStop: old ? old.mailStop : [], lastMail: old ? old.lastMail : null };
+    });
     state = normalize(state); saveLocal();
   }
   undoStack = [];
@@ -659,6 +663,7 @@ function renderCall() {
 
 // ===== メールで知らせる =====
 let mailPlans = {};
+function fmtTime(at) { return new Date(at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function mailCardHtml(c, ts) {
   const targets = [], noMail = [];
   for (let n = 1; n <= c.count; n++) {
@@ -666,15 +671,34 @@ function mailCardHtml(c, ts) {
     if (!miss.length) continue;
     if (EMAIL_RE.test(stuEmail(c, n))) targets.push({ n, miss }); else noMail.push(n);
   }
-  mailPlans[c.name] = { c, targets, noMail };
+  // 今回だけ送らない（チェックを外した）生徒と、メール停止中の生徒は除く
+  const skip = ui.mailSkip[c.name] || (ui.mailSkip[c.name] = new Set());
+  const stop = new Set(c.mailStop || []);
+  const sendList = targets.filter((t) => !stop.has(t.n) && !skip.has(t.n));
+  const excluded = targets.filter((t) => stop.has(t.n) || skip.has(t.n)).map((t) => t.n);
+  mailPlans[c.name] = { c, sendList, excluded, noMail };
   const registered = c.emails.filter(Boolean).length;
-  const last = c.lastMail ? `前回の送信：${new Date(c.lastMail.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}（${c.lastMail.sent}人）` : 'まだ送信していません';
-  return `<div class="callrow" style="align-items:center">
+  const last = c.lastMail ? `前回の送信：${fmtTime(c.lastMail.at)}（${c.lastMail.sent}人）` : 'まだ送信していません';
+  const open = ui.mailOpen === c.name;
+  const ca = `data-cls="${esc(c.name)}"`;
+  return `<div class="callrow" style="align-items:center;flex-wrap:wrap">
     <div class="who">${esc(c.name)}</div>
-    <div class="what">送信対象 <b>${targets.length}人</b>${noMail.length ? `　<span class="muted">メール未登録のため送れない人：${nosText(noMail, 12)}</span>` : ''}
+    <div class="what">送信対象 <b>${sendList.length}人</b>${excluded.length ? `　<span style="color:var(--c-few)">送らない：${nosText(excluded, 12)}</span>` : ''}${noMail.length ? `　<span class="muted">メール未登録：${nosText(noMail, 12)}</span>` : ''}
       <div class="muted">登録済み ${registered}/${c.count}人・${last}</div></div>
-    <button class="btn small" data-mprev="${esc(c.name)}"${targets.length ? '' : ' disabled'}>文面を確認</button>
-    <button class="btn small primary" data-msend="${esc(c.name)}"${targets.length ? '' : ' disabled'}>メールを送る</button></div>`;
+    <button class="btn small" data-mopen ${ca}${targets.length ? '' : ' disabled'}>${open ? '▲ 閉じる' : '▼ 送る相手を確認・除外'}</button>
+    <button class="btn small" data-mprev ${ca}${sendList.length ? '' : ' disabled'}>文面を確認</button>
+    <button class="btn small primary" data-msend ${ca}${sendList.length ? '' : ' disabled'}>メールを送る（${sendList.length}人）</button></div>
+    ${open ? `<div class="note" style="margin:8px 0 4px">
+      チェックを外した生徒には、<b>今回だけ</b>送りません。事情があって提出できない生徒などは「今後も送らない」にすると、解除するまでメールを送りません（印刷や声かけビューには、これまでどおり表示されます）。
+      <div class="row" style="margin-top:6px"><button class="btn small" data-mall="1" ${ca}>すべてチェック</button><button class="btn small" data-mall="0" ${ca}>すべて外す</button></div>
+    </div>
+    ${targets.map((t) => {
+      const stopped = stop.has(t.n);
+      return `<div class="callrow" style="align-items:center;padding-left:12px">
+        <label class="chk who" style="min-width:150px"><input type="checkbox" data-mskip ${ca} data-no="${t.n}"${!stopped && !skip.has(t.n) ? ' checked' : ''}${stopped ? ' disabled' : ''}> ${esc(stuLabel(c, t.n))}</label>
+        <div class="what">${t.miss.map((x) => esc(x.name)).join('、')}${stopped ? ' <span class="badge b-few">メール停止中</span>' : ''}</div>
+        <button class="btn small" data-mstop ${ca} data-no="${t.n}">${stopped ? '停止を解除' : '今後も送らない'}</button></div>`;
+    }).join('')}` : ''}`;
 }
 function mailSectionHtml(classes, cards) {
   if (!IS_GAS) return `<div class="card"><h2>メールで知らせる</h2><p class="muted" style="margin:0">メールの一斉送信は、<a href="setup.html" target="_blank" rel="noopener">Googleアカウントで同期する版</a>でだけ使えます。</p></div>`;
@@ -683,33 +707,65 @@ function mailSectionHtml(classes, cards) {
     <h2>メールで知らせる</h2>
     ${anyMail ? `
     <div class="row" style="margin-bottom:6px"><label class="f">件名<input id="mSubject" value="${esc(ui.mailSubject)}" style="min-width:260px"></label></div>
-    <p class="muted" style="margin:4px 0 6px">未提出がある生徒一人ひとりに、本人の未提出だけを書いたメールを、あなたのGmailから送ります（個人別の用紙と同じ文面です）。${ui.overdueOnly ? '<b>「締切を過ぎた提出物だけ」がオンなので、締切を過ぎた提出物だけを知らせます。</b>' : ''}</p>
+    <p class="muted" style="margin:4px 0 6px">未提出がある生徒一人ひとりに、本人の未提出だけを書いたメールを、あなたのGmailから送ります（個人別の用紙と同じ文面です）。送りたくない生徒は「送る相手を確認・除外」で外せます。${ui.overdueOnly ? '<b>「締切を過ぎた提出物だけ」がオンなので、締切を過ぎた提出物だけを知らせます。</b>' : ''}</p>
     ${cards.join('')}
     <div id="mPreview"></div>`
     : '<p class="muted" style="margin:0">メールアドレスがまだ登録されていません。「提出物」→「クラス設定」の「名前・メール」から、生徒のGoogleアカウントのメールアドレスを登録してください。</p>'}
   </div>`;
 }
+function setMailStop(c, no, on) {
+  const set = new Set(c.mailStop || []);
+  if (on) set.add(no); else set.delete(no);
+  c.mailStop = [...set].sort((a, b) => a - b);
+  persist('setMailStop', c.name, c.mailStop);
+}
 function bindMail(el) {
+  const planOf = (b) => mailPlans[b.dataset.cls];
   if ($('#mSubject')) $('#mSubject').onchange = (e) => { ui.mailSubject = e.target.value.trim() || '提出物の確認のお願い'; };
+  el.querySelectorAll('[data-mopen]').forEach((b) => b.onclick = () => { ui.mailOpen = ui.mailOpen === b.dataset.cls ? null : b.dataset.cls; render(); });
+  el.querySelectorAll('[data-mskip]').forEach((b) => b.onchange = () => {
+    const skip = ui.mailSkip[b.dataset.cls];
+    if (b.checked) skip.delete(+b.dataset.no); else skip.add(+b.dataset.no);
+    render();
+  });
+  el.querySelectorAll('[data-mall]').forEach((b) => b.onclick = () => {
+    const skip = ui.mailSkip[b.dataset.cls];
+    skip.clear();
+    if (b.dataset.mall === '0') el.querySelectorAll(`[data-mskip]`).forEach((x) => { if (x.dataset.cls === b.dataset.cls) skip.add(+x.dataset.no); });
+    render();
+  });
+  el.querySelectorAll('[data-mstop]').forEach((b) => b.onclick = () => {
+    const c = getCls(b.dataset.cls), no = +b.dataset.no;
+    const stopped = (c.mailStop || []).includes(no);
+    if (!stopped && !confirm(`${stuLabel(c, no)}さんには、解除するまで未提出のメールを送りません。よろしいですか？`)) return;
+    setMailStop(c, no, !stopped);
+    toast(stopped ? `${stuLabel(c, no)}：メールの停止を解除しました` : `${stuLabel(c, no)}：今後メールを送りません`);
+    render();
+  });
   el.querySelectorAll('[data-mprev]').forEach((b) => b.onclick = () => {
-    const plan = mailPlans[b.dataset.mprev]; const t = plan.targets[0];
+    const plan = planOf(b); const t = plan.sendList[0];
     const m = mailFor(plan.c, t.n, t.miss, ui.mailSubject);
-    $('#mPreview').innerHTML = `<div class="note" style="white-space:pre-wrap;margin-top:10px"><b>宛先：</b>${esc(m.to)}\n<b>件名：</b>${esc(m.subject)}\n\n${esc(m.body)}</div><p class="muted">（1人目の例です。生徒ごとに、その生徒の未提出だけが書かれます。）</p>`;
+    $('#mPreview').innerHTML = `<div class="note" style="white-space:pre-wrap;margin-top:10px"><b>宛先：</b>${esc(m.to)}\n<b>件名：</b>${esc(m.subject)}\n\n${esc(m.body)}</div><p class="muted">（送信対象の1人目の例です。生徒ごとに、その生徒の未提出だけが書かれます。）</p>`;
   });
   el.querySelectorAll('[data-msend]').forEach((b) => b.onclick = async () => {
-    const plan = mailPlans[b.dataset.msend];
-    const mails = plan.targets.map((t) => mailFor(plan.c, t.n, t.miss, ui.mailSubject));
+    const plan = planOf(b);
+    const mails = plan.sendList.map((t) => mailFor(plan.c, t.n, t.miss, ui.mailSubject));
     if (!mails.length) return;
-    let msg = `${plan.c.name}の${mails.length}人に、一人ずつメールを送ります。\n件名：${mails[0].subject.replace(/（.*）$/, '')}`;
-    if (plan.noMail.length) msg += `\n\nメール未登録の${plan.noMail.length}人（${nosText(plan.noMail, 15)}）には送られません。`;
+    let msg = `${plan.c.name}の${mails.length}人に、一人ずつメールを送ります。\n件名：${ui.mailSubject}\n送る相手：${nosText(plan.sendList.map((t) => t.n), 40)}`;
+    if (plan.excluded.length) msg += `\n\n送らない人（除外・メール停止中）：${nosText(plan.excluded, 40)}`;
+    if (plan.noMail.length) msg += `\nメール未登録で送れない人：${nosText(plan.noMail, 40)}`;
     if (plan.c.lastMail && Date.now() - plan.c.lastMail.at < 3600000) msg += '\n\n※1時間以内にこのクラスへ送信しています。二重送信にご注意ください。';
     if (!confirm(msg + '\n\n送信しますか？')) return;
     b.disabled = true; b.textContent = '送信中…';
     try {
       const r = await gas('sendReminders', plan.c.name, mails);
       plan.c.lastMail = r.lastMail;
-      alert(`${r.sent}人に送信しました。` + (r.failed.length ? `\n\n送信できなかった人：\n` + r.failed.map((f) => `${f.no}番 ${f.to}：${f.error}`).join('\n') : '') +
+      ui.mailSkip[plan.c.name] = new Set();
+      alert(`${r.sent}人に送信しました。` +
+        (r.skipped && r.skipped.length ? `\n\nほかの端末でメール停止にしていたため送らなかった人：${nosText(r.skipped)}` : '') +
+        (r.failed.length ? `\n\n送信できなかった人：\n` + r.failed.map((f) => `${f.no}番 ${f.to}：${f.error}`).join('\n') : '') +
         `\n\n今日あと${r.remaining}通まで送れます。送信記録はスプレッドシートの「メール送信記録」シートにあります。`);
+      if (r.skipped && r.skipped.length) await reload(true);
     } catch (e) {
       alert('送信できませんでした：' + (e && e.message || e));
     }
@@ -1035,6 +1091,7 @@ function renderHelp() {
       <li>「提出物」→「クラス設定」の「名前・メール」に、生徒のメールアドレス（Googleアカウント）を出席番号順に登録します。</li>
       <li>「声かけビュー」の「メールで知らせる」で「メールを送る」を押すと、未提出がある生徒一人ひとりに、本人の未提出だけを書いたメールがあなたのGmailから送られます。文面は個人別の用紙と同じです。</li>
       <li>送る前に「文面を確認」で内容を確かめられます。送信記録はスプレッドシートの「メール送信記録」シートに残ります。</li>
+      <li>事情があって提出できない生徒などには、「送る相手を確認・除外」でチェックを外すと今回だけ送りません。「今後も送らない」にすると、解除するまで送りません。</li>
     </ul>
     <h3>紙にする</h3>
     <ul>

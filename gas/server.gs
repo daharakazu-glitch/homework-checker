@@ -89,7 +89,7 @@ function getData() {
       checks[id][c.name] = m;
     }
     const last = props_().getProperty('lastMail:' + c.name);
-    return { name: c.name, count: c.count, names: names, emails: emails, lastMail: last ? JSON.parse(last) : null };
+    return { name: c.name, count: c.count, names: names, emails: emails, lastMail: last ? JSON.parse(last) : null, mailStop: getMailStop_(c.name) };
   });
   return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl() };
 }
@@ -162,6 +162,13 @@ function saveClasses(list) {
       const sh = ss.getSheetByName(c.oldName);
       if (sh) sh.setName('__tmp__' + c.oldName);
     });
+    // クラスごとの設定（メール停止・前回送信）も新しい名前に移す
+    const props = props_();
+    const moved = renamed.map(function (c) {
+      return { name: c.name, values: ['mailStop:', 'lastMail:'].map(function (k) { return [k, props.getProperty(k + c.oldName)]; }) };
+    });
+    renamed.forEach(function (c) { props.deleteProperty('mailStop:' + c.oldName); props.deleteProperty('lastMail:' + c.oldName); });
+    moved.forEach(function (m) { m.values.forEach(function (kv) { if (kv[1] !== null) props.setProperty(kv[0] + m.name, kv[1]); }); });
     renamed.forEach(function (c) {
       if (ss.getSheetByName(c.name)) throw new Error('同じ名前のシートがすでにあります：' + c.name);
       const sh = ss.getSheetByName('__tmp__' + c.oldName);
@@ -194,8 +201,12 @@ function sendReminders(clsName, mails) {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const log = [];
   const failed = [];
+  const skipped = [];
+  const stop = getMailStop_(clsName);
   let sent = 0;
   mails.forEach(function (m) {
+    // ほかの端末でメール停止にした生徒には送らない
+    if (stop.indexOf(Number(m.no)) >= 0) { skipped.push(Number(m.no)); return; }
     const to = String(m.to || '').trim();
     let result = '送信済み';
     try {
@@ -215,11 +226,23 @@ function sendReminders(clsName, mails) {
       sh.getRange(1, 1, 1, 6).setValues([['送信日時', 'クラス', '番号', '宛先', '件名', '結果']]).setFontWeight('bold');
       sh.setFrozenRows(1);
     }
-    sh.getRange(sh.getLastRow() + 1, 1, log.length, 6).setValues(log);
+    if (log.length) sh.getRange(sh.getLastRow() + 1, 1, log.length, 6).setValues(log);
   });
-  const lastMail = { at: Date.now(), sent: sent };
-  props_().setProperty('lastMail:' + clsName, JSON.stringify(lastMail));
-  return { sent: sent, failed: failed, remaining: MailApp.getRemainingDailyQuota(), lastMail: lastMail };
+  let lastMail = { at: Date.now(), sent: sent };
+  if (sent) props_().setProperty('lastMail:' + clsName, JSON.stringify(lastMail));
+  else { const prev = props_().getProperty('lastMail:' + clsName); lastMail = prev ? JSON.parse(prev) : null; }
+  return { sent: sent, failed: failed, skipped: skipped, remaining: MailApp.getRemainingDailyQuota(), lastMail: lastMail };
+}
+
+// 事情があって提出できない生徒など、未提出のメールを送らない番号を保存する
+function setMailStop(clsName, nos) {
+  props_().setProperty('mailStop:' + clsName, JSON.stringify((nos || []).map(Number).filter(function (n) { return n > 0; })));
+  return true;
+}
+
+function getMailStop_(clsName) {
+  const v = props_().getProperty('mailStop:' + clsName);
+  try { return v ? JSON.parse(v).map(Number) : []; } catch (e) { return []; }
 }
 
 // メール送信の許可を出すため、エディタで一度だけ実行する
@@ -251,6 +274,7 @@ function importState(state) {
     writeSettings_(list);
     writeTasks_(tasks);
     if (state.mode) setMode(state.mode);
+    (state.classes || []).forEach(function (c) { setMailStop(String(c.name).trim(), c.mailStop || []); });
     const checks = state.checks || {};
     list.forEach(function (c) {
       const sh = ensureClassSheet_(c.name, c.count, tasks);
