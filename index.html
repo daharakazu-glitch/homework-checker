@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>提出物チェッカー</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e2e5ea;
+  --accent: #2563eb; --accent-soft: #e3ebff;
+  --c-collect: #2563eb; --c-collect-bg: #eef3ff;
+  --c-few: #b45309; --c-few-bg: #fff6e0;
+  --c-over: #c62828; --c-over-bg: #fdecec;
+  --c-done: #15803d; --c-done-bg: #e7f7ed;
+  --on: #16a34a; --on-bg: #dcf5e4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #13161c; --card: #1d2129; --text: #e7e9ee; --muted: #9aa1ad; --line: #2e333e;
+    --accent: #7aa5ff; --accent-soft: #24304f;
+    --c-collect: #8fb2ff; --c-collect-bg: #1d2740;
+    --c-few: #fbbf5a; --c-few-bg: #3a2f17;
+    --c-over: #ff8a8a; --c-over-bg: #3e1c1c;
+    --c-done: #6ee39a; --c-done-bg: #173525;
+    --on: #6ee39a; --on-bg: #1b3a27;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-size: 15px;
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif; }
+header { position: sticky; top: 0; z-index: 20; background: var(--card); border-bottom: 1px solid var(--line);
+  padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+nav { display: flex; gap: 2px; flex-wrap: wrap; }
+nav button { background: none; border: none; padding: 7px 11px; border-radius: 8px; color: var(--muted);
+  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+nav button.active { background: var(--accent-soft); color: var(--accent); }
+main { max-width: 1200px; margin: 0 auto; padding: 14px 16px 40px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+h3.sec { font-size: 14px; margin: 18px 0 8px; color: var(--muted); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; }
+textarea { width: 100%; min-height: 110px; }
+.btn { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--card); color: var(--text);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--c-over); }
+.btn.small { font-size: 12px; padding: 3px 8px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.muted { color: var(--muted); font-size: 13px; }
+.chk { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; cursor: pointer; }
+.hidden { display: none !important; }
+.empty { padding: 26px; text-align: center; color: var(--muted); }
+
+/* status cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.tcard { text-align: left; font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line);
+  border-left: 6px solid var(--c-collect); border-radius: 10px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.tcard:hover { border-color: var(--accent); }
+.tcard .top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); }
+.tcard .name { font-weight: 700; font-size: 15px; }
+.tcard .count { font-size: 13px; } .tcard .count b { font-size: 20px; }
+.tcard .miss { font-size: 13px; }
+.tcard .meta { font-size: 12px; color: var(--muted); }
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.st-collect { border-left-color: var(--c-collect); } .b-collect { background: var(--c-collect-bg); color: var(--c-collect); }
+.st-few { border-left-color: var(--c-few); } .b-few { background: var(--c-few-bg); color: var(--c-few); }
+.st-over { border-left-color: var(--c-over); } .b-over { background: var(--c-over-bg); color: var(--c-over); }
+.st-done { border-left-color: var(--c-done); } .b-done { background: var(--c-done-bg); color: var(--c-done); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar > div { height: 100%; background: currentColor; }
+.legend { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* check grid */
+.tablewrap { overflow: auto; max-height: calc(100vh - 260px); border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+table.grid { border-collapse: separate; border-spacing: 0; font-size: 13px; }
+table.grid th, table.grid td { border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 0; text-align: center; }
+table.grid thead th { position: sticky; top: 0; background: var(--card); z-index: 2; padding: 6px 4px; min-width: 76px; max-width: 120px; vertical-align: bottom; }
+table.grid .sticky { position: sticky; left: 0; background: var(--card); z-index: 1; padding: 0 8px; text-align: left; white-space: nowrap; }
+table.grid thead .sticky { z-index: 3; }
+.th-name { font-weight: 700; font-size: 12px; line-height: 1.25; word-break: break-all; }
+.th-sub { font-size: 11px; color: var(--muted); font-weight: 400; }
+.cell { width: 100%; min-width: 76px; height: 34px; border: none; background: transparent; font: inherit; font-size: 17px;
+  font-weight: 700; color: var(--on); cursor: pointer; }
+.cell.on { background: var(--on-bg); }
+.cell.late { background: var(--c-over-bg); }
+.cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.quick input { width: 90px; font-size: 18px; text-align: center; }
+.lastmsg { font-size: 13px; min-height: 1.3em; }
+
+/* call view */
+.callrow { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.callrow .who { font-weight: 700; min-width: 70px; }
+.callrow .what { flex: 1; }
+.callrow .n { font-size: 12px; color: var(--c-over); white-space: nowrap; }
+.note { font-size: 12px; color: var(--muted); background: var(--bg); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
+
+/* print preview */
+.pages { display: flex; flex-direction: column; gap: 16px; align-items: center; }
+.page { background: #fff; color: #000; width: 210mm; min-height: 297mm; padding: 14mm 12mm; box-shadow: 0 1px 6px rgba(0,0,0,.18); font-size: 12px; }
+.page h2 { font-size: 18px; margin: 0 0 4px; }
+.page .sub { font-size: 11px; color: #555; margin-bottom: 8px; }
+.page table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+.page th, .page td { border: 1px solid #555; padding: 2px 3px; text-align: center; height: 18px; overflow: hidden; }
+.page th { font-size: 10px; font-weight: 600; background: #f0f0f0; word-break: break-all; }
+.page td.miss { background: #eee; }
+.page .legendp { font-size: 10px; margin-top: 6px; color: #333; }
+.slip { border: 1px dashed #777; border-radius: 6px; padding: 10px 12px; margin-bottom: 6mm; height: 59mm; overflow: hidden; }
+.slip h3 { margin: 0 0 4px; font-size: 15px; }
+.slip ul { margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.slip .foot { font-size: 11px; color: #444; }
+@page { size: A4; margin: 0; }
+@media print {
+  body { background: #fff; }
+  header, .noprint, main > section:not(#view-print), .toast, #modeDlg { display: none !important; }
+  main { padding: 0; max-width: none; }
+  .pages { gap: 0; display: block; }
+  .page { box-shadow: none; page-break-after: always; break-after: page; margin: 0; }
+  .page:last-child { page-break-after: auto; break-after: auto; }
+}
+
+/* misc */
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 8px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 60; }
+.toast.show { opacity: .94; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.dialog { background: var(--card); border-radius: 14px; padding: 20px; max-width: 460px; width: 100%; }
+.dialog h2 { margin: 0 0 6px; font-size: 18px; }
+.choice { display: block; width: 100%; text-align: left; margin-top: 10px; padding: 12px 14px; }
+.choice b { display: block; font-size: 15px; }
+table.list { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.list th, table.list td { border-bottom: 1px solid var(--line); padding: 6px; text-align: left; vertical-align: middle; }
+.help h3 { font-size: 15px; margin: 18px 0 6px; }
+.help ol, .help ul { padding-left: 22px; margin: 4px 0; }
+.help li { margin: 3px 0; }
+#loading { padding: 60px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="noprint">
+  <h1>提出物チェッカー</h1>
+  <nav id="nav">
+    <button data-view="status">回収状況</button>
+    <button data-view="check">チェック入力</button>
+    <button data-view="call">声かけビュー</button>
+    <button data-view="print">印刷プレビュー</button>
+    <button data-view="tasks">提出物</button>
+    <button data-view="help">使い方</button>
+  </nav>
+</header>
+<main>
+  <div id="loading">読み込んでいます…</div>
+  <section id="view-status" class="hidden"></section>
+  <section id="view-check" class="hidden"></section>
+  <section id="view-call" class="hidden"></section>
+  <section id="view-print" class="hidden"></section>
+  <section id="view-tasks" class="hidden"></section>
+  <section id="view-help" class="hidden"></section>
+</main>
+<div id="modeDlg" class="overlay hidden">
+  <div class="dialog">
+    <h2>どちらの使い方に近いですか？</h2>
+    <p class="muted">あとから「提出物」→「クラス設定」で変更できます。</p>
+    <button class="btn choice" data-mode="single"><b>1クラスで使う</b><span class="muted">担任クラスなど、1クラスの提出物を管理します</span></button>
+    <button class="btn choice" data-mode="multi"><b>複数クラスで使う</b><span class="muted">教科担任として、担当する複数クラスを行き来します</span></button>
+    <button class="btn choice" data-mode="sample"><b>サンプルで試してみる</b><span class="muted">架空の3クラスと英語の提出物で画面を確認します（あとで初期化できます）</span></button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== 動作環境 =====
+// Apps Script（スプレッドシート）上ではシートに保存し、それ以外ではこの端末のブラウザに保存する。
+const IS_GAS = typeof google !== 'undefined' && !!(google.script && google.script.run);
+const LS_KEY = 'teishutsu-checker-v1';
+const MAX_CLASSES = 10, MAX_STUDENTS = 45;
+const SUGGEST = ['ワークブック', '単語テスト直し', '単語ノート', '英作文', '予習ノート', '文法プリント', '音読カード',
+  'リスニング課題', 'スピーキング課題（録音）', '多読記録', '模試の解き直し', '英検過去問', '長期休業課題', '振り返りシート'];
+const ST_LABEL = { collect: '回収中', few: 'あと5人以下', over: '締切超過', done: '全員提出' };
+
+let state = emptyState();
+let ui = {
+  view: 'status', cls: null,
+  sort: 'due', filterCls: '', hideDone: false,
+  chkHideDone: false, onlyMissing: false, quickTask: null, lastMsg: '', focusQuick: false,
+  callCls: '', overdueOnly: false,
+  printType: 'class', printCls: null, printStu: 'all', printNames: false, blankCols: 10, blankTitle: '',
+  editing: null, classDraft: null, openRoster: null,
+};
+let undoStack = [];
+let copyTexts = [];
+
+function emptyState() { return { mode: '', classes: [], tasks: [], checks: {} }; }
+
+// ===== 共通 =====
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2000); }
+function fmtDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function todayStr() { return fmtDate(new Date()); }
+function addDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return fmtDate(d); }
+function dayDiff(a, b) { const p = (s) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); }; return Math.round((p(b) - p(a)) / 86400000); }
+function md(s) { if (!s) return ''; const [, m, d] = s.split('-'); return `${+m}/${+d}`; }
+function newId() { return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+function getCls(name) { return state.classes.find((c) => c.name === name); }
+function activeClasses() { return state.mode === 'single' ? state.classes.slice(0, 1) : state.classes; }
+function tasksOf(clsName) { return state.tasks.filter((t) => t.classes.includes(clsName)).sort((a, b) => a.created - b.created); }
+function isChecked(id, cls, no) { return !!(state.checks[id] && state.checks[id][cls] && state.checks[id][cls][no]); }
+function missingNos(t, c) { const r = []; for (let n = 1; n <= c.count; n++) if (!isChecked(t.id, c.name, n)) r.push(n); return r; }
+function nosText(arr, max) {
+  if (!arr.length) return 'なし';
+  if (max && arr.length > max) return arr.slice(0, max).join('・') + `番 ほか${arr.length - max}人`;
+  return arr.join('・') + '番';
+}
+function stuName(c, no) { return (c.names || [])[no - 1] || ''; }
+function stuLabel(c, no) { const nm = stuName(c, no); return nm ? `${no}番 ${nm}` : `${no}番`; }
+function isOverdue(t) { return !!t.due && t.due < todayStr(); }
+function dueText(t) {
+  if (!t.due) return '締切なし';
+  const d = dayDiff(todayStr(), t.due);
+  if (d > 0) return `締切 ${md(t.due)}（あと${d}日）`;
+  if (d === 0) return `今日締切`;
+  return `締切 ${md(t.due)}（${-d}日超過）`;
+}
+function toldText(t) {
+  if (!t.told) return '';
+  const d = dayDiff(t.told, todayStr());
+  return d >= 0 ? `伝えて${d}日` : `${md(t.told)}に伝える予定`;
+}
+function cardInfo(t, c) {
+  const miss = missingNos(t, c);
+  let st = 'collect';
+  if (!miss.length) st = 'done'; else if (isOverdue(t)) st = 'over'; else if (miss.length <= 5) st = 'few';
+  return { t, c, miss, done: c.count - miss.length, st };
+}
+function classOptions(selected, withAll) {
+  return (withAll ? `<option value="">すべてのクラス</option>` : '') +
+    activeClasses().map((c) => `<option value="${esc(c.name)}"${c.name === selected ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+}
+function ensureCls() {
+  const cs = activeClasses();
+  if (!cs.find((c) => c.name === ui.cls)) ui.cls = cs[0] ? cs[0].name : null;
+  return getCls(ui.cls);
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('コピーしました'); return; } catch (e) {}
+  const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); toast('コピーしました'); } catch (e) { prompt('コピーしてください', text); }
+  ta.remove();
+}
+
+// ===== 保存（ブラウザ or スプレッドシート） =====
+function gas(fn, ...args) {
+  return new Promise((res, rej) => google.script.run.withSuccessHandler(res).withFailureHandler(rej)[fn](...args));
+}
+function loadLocal() {
+  try { const d = JSON.parse(localStorage.getItem(LS_KEY)); if (d && Array.isArray(d.classes)) return d; } catch (e) {}
+  return emptyState();
+}
+function saveLocal() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) { toast('この端末に保存できませんでした'); }
+}
+function normalize(s) {
+  s = Object.assign(emptyState(), s || {});
+  s.classes = (s.classes || []).map((c) => {
+    const count = Math.max(1, Math.min(MAX_STUDENTS, parseInt(c.count, 10) || 1));
+    const names = Array.from({ length: count }, (_, i) => String((c.names || [])[i] || '').trim());
+    return { name: String(c.name).trim(), count, names };
+  });
+  s.tasks = (s.tasks || []).map((t) => ({ id: t.id, name: t.name, classes: t.classes || [], told: t.told || '', due: t.due || '', created: Number(t.created) || 0 }));
+  s.checks = s.checks || {};
+  return s;
+}
+async function persist(gasFn, ...args) {
+  if (!IS_GAS) { saveLocal(); return; }
+  try { await gas(gasFn, ...args); }
+  catch (e) { toast('スプレッドシートへの保存に失敗しました：' + (e && e.message || e)); await reload(); }
+}
+async function reload() {
+  try { state = normalize(IS_GAS ? await gas('getData') : loadLocal()); }
+  catch (e) { $('#loading').textContent = '読み込みに失敗しました：' + (e && e.message || e); $('#loading').classList.remove('hidden'); return; }
+  render();
+}
+
+function setCheck(cls, id, no, on, recordUndo = true) {
+  const prev = isChecked(id, cls, no);
+  if (prev === on) return;
+  if (recordUndo) undoStack.push({ cls, id, no, prev });
+  if (undoStack.length > 200) undoStack.shift();
+  state.checks[id] = state.checks[id] || {};
+  state.checks[id][cls] = state.checks[id][cls] || {};
+  if (on) state.checks[id][cls][no] = true; else delete state.checks[id][cls][no];
+  persist('setCheck', cls, id, no, on);
+}
+function upsertTask(t) {
+  const i = state.tasks.findIndex((x) => x.id === t.id);
+  if (i >= 0) state.tasks[i] = t; else state.tasks.push(t);
+  persist('saveTask', t);
+}
+function removeTask(id) {
+  state.tasks = state.tasks.filter((t) => t.id !== id);
+  delete state.checks[id];
+  undoStack = undoStack.filter((u) => u.id !== id);
+  persist('deleteTask', id);
+}
+async function saveClasses(list) {
+  if (IS_GAS) {
+    try { state = normalize(await gas('saveClasses', list)); }
+    catch (e) { toast('保存に失敗しました：' + (e && e.message || e)); return false; }
+  } else {
+    const keep = new Set(list.map((c) => c.oldName).filter(Boolean));
+    const removed = state.classes.map((c) => c.name).filter((n) => !keep.has(n));
+    for (const t of state.tasks) {
+      t.classes = t.classes.filter((n) => !removed.includes(n));
+      for (const c of list) if (c.oldName && c.oldName !== c.name) t.classes = t.classes.map((n) => n === c.oldName ? c.name : n);
+    }
+    for (const id in state.checks) {
+      const old = state.checks[id], next = {};
+      for (const c of list) if (c.oldName && old[c.oldName]) next[c.name] = old[c.oldName];
+      state.checks[id] = next;
+    }
+    state.classes = list.map((c) => ({ name: c.name, count: c.count, names: c.names }));
+    state = normalize(state); saveLocal();
+  }
+  undoStack = [];
+  return true;
+}
+async function importState(s) {
+  s = normalize(s);
+  if (IS_GAS) {
+    try { state = normalize(await gas('importState', s)); }
+    catch (e) { toast('失敗しました：' + (e && e.message || e)); return; }
+  } else { state = s; saveLocal(); }
+  undoStack = []; ui.classDraft = null; ui.cls = null; ui.lastMsg = '';
+}
+function setMode(mode) {
+  state.mode = mode; ui.classDraft = null;
+  persist('setMode', mode);
+}
+
+// ===== サンプル =====
+function buildSample() {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const classes = [{ name: '2年1組', count: 38 }, { name: '2年2組', count: 40 }, { name: '2年3組', count: 39 }];
+  const all = classes.map((c) => c.name);
+  const base = Date.now() - 100000;
+  const tasks = [
+    { name: 'Lesson 4 ワークブック', classes: all, told: addDays(-7), due: todayStr(), rate: 0.86 },
+    { name: '英作文（My Future Dream）', classes: ['2年1組', '2年2組'], told: addDays(-10), due: addDays(-2), rate: 0.93 },
+    { name: '単語テスト直し', classes: all, told: addDays(-2), due: addDays(3), rate: 0.55 },
+    { name: '音読カード（10月）', classes: ['2年3組'], told: addDays(-14), due: addDays(-1), rate: 1 },
+  ].map((t, i) => Object.assign(t, { id: 'sample' + i, created: base + i }));
+  const checks = {};
+  for (const t of tasks) {
+    checks[t.id] = {};
+    for (const cn of t.classes) {
+      const c = classes.find((x) => x.name === cn); checks[t.id][cn] = {};
+      for (let n = 1; n <= c.count; n++) if (rnd() < t.rate) checks[t.id][cn][n] = true;
+    }
+    delete t.rate;
+  }
+  return { mode: 'multi', classes, tasks, checks };
+}
+
+// ===== 画面切り替え =====
+document.querySelectorAll('#nav button').forEach((b) => b.onclick = () => { ui.view = b.dataset.view; render(); window.scrollTo(0, 0); });
+function render() {
+  $('#loading').classList.add('hidden');
+  document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === ui.view));
+  for (const v of ['status', 'check', 'call', 'print', 'tasks', 'help']) $('#view-' + v).classList.toggle('hidden', v !== ui.view);
+  ({ status: renderStatus, check: renderCheck, call: renderCall, print: renderPrint, tasks: renderTasks, help: renderHelp })[ui.view]();
+  $('#modeDlg').classList.toggle('hidden', !!state.mode);
+}
+function needSetup() {
+  if (!activeClasses().length) return `<div class="card empty">まだクラスが登録されていません。<br><br><button class="btn primary" data-go="tasks">「提出物」画面でクラスを登録する</button></div>`;
+  if (!state.tasks.length) return `<div class="card empty">まだ提出物が登録されていません。まずは今日集める提出物を一つ登録してみましょう。<br><br><button class="btn primary" data-go="tasks" data-add="1">＋ 提出物を追加</button></div>`;
+  return '';
+}
+document.addEventListener('click', (e) => {
+  const g = e.target.closest('[data-go]'); if (!g) return;
+  ui.view = g.dataset.go;
+  if (g.dataset.add) ui.editing = newTaskDraft();
+  render();
+});
+
+// ===== 回収状況 =====
+function cardHtml(i) {
+  const pct = Math.round(i.done / i.c.count * 100);
+  return `<button class="tcard st-${i.st}" data-cls="${esc(i.c.name)}" data-id="${i.t.id}">
+    <div class="top"><span class="badge b-${i.st}">${ST_LABEL[i.st]}</span>${state.mode === 'multi' ? `<span>${esc(i.c.name)}</span>` : ''}</div>
+    <div class="name">${esc(i.t.name)}</div>
+    <div class="count"><b>${i.done}</b> / ${i.c.count}人 提出（${pct}%）</div>
+    <div class="bar" style="color:var(--c-${i.st})"><div style="width:${pct}%"></div></div>
+    <div class="miss">${i.miss.length ? '未提出：' + nosText(i.miss, 15) : '全員提出しました'}</div>
+    <div class="meta">${dueText(i.t)}${toldText(i.t) ? '・' + toldText(i.t) : ''}</div>
+  </button>`;
+}
+function renderStatus() {
+  const el = $('#view-status');
+  const ns = needSetup(); if (ns) { el.innerHTML = ns; return; }
+  const today = todayStr();
+  const classes = activeClasses();
+  let items = [];
+  for (const c of classes) for (const t of tasksOf(c.name)) items.push(cardInfo(t, c));
+  const counts = { collect: 0, few: 0, over: 0, done: 0 };
+  items.forEach((i) => counts[i.st]++);
+  const todays = items.filter((i) => i.t.due === today).sort((a, b) => b.miss.length - a.miss.length);
+  let list = items.filter((i) => (!ui.filterCls || i.c.name === ui.filterCls) && (!ui.hideDone || i.st !== 'done'));
+  const ci = (i) => classes.indexOf(i.c);
+  const sorters = {
+    class: (a, b) => ci(a) - ci(b) || a.t.created - b.t.created,
+    task: (a, b) => a.t.created - b.t.created || ci(a) - ci(b),
+    due: (a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999') || b.miss.length - a.miss.length,
+    missing: (a, b) => b.miss.length - a.miss.length || ci(a) - ci(b),
+  };
+  list.sort(sorters[ui.sort]);
+  el.innerHTML = `
+    <div class="card">
+      <h2>今日が締切の提出物（${md(today)}）</h2>
+      ${todays.length ? `<div class="cards">${todays.map(cardHtml).join('')}</div>` : '<p class="muted">今日が締切の提出物はありません。</p>'}
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <h2 style="margin:0">すべての提出物</h2>
+        <div class="legend">
+          <span class="badge b-collect">回収中 ${counts.collect}</span><span class="badge b-few">あと5人以下 ${counts.few}</span>
+          <span class="badge b-over">締切超過 ${counts.over}</span><span class="badge b-done">全員提出 ${counts.done}</span>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <label class="f">並べ替え<select id="stSort">
+          <option value="due">締切が近い順</option><option value="missing">未提出が多い順</option>
+          ${state.mode === 'multi' ? '<option value="class">クラスごと</option>' : ''}<option value="task">提出物ごと</option>
+        </select></label>
+        ${state.mode === 'multi' ? `<label class="f">クラス<select id="stCls">${classOptions(ui.filterCls, true)}</select></label>` : ''}
+        <label class="chk" style="margin-top:14px"><input type="checkbox" id="stHide"${ui.hideDone ? ' checked' : ''}> 全員提出を隠す</label>
+      </div>
+      ${list.length ? `<div class="cards">${list.map(cardHtml).join('')}</div>` : '<p class="muted">表示する提出物はありません。</p>'}
+      <p class="muted" style="margin-bottom:0">カードを押すと、そのクラスのチェック入力を開きます。</p>
+    </div>`;
+  $('#stSort').value = ui.sort;
+  $('#stSort').onchange = (e) => { ui.sort = e.target.value; render(); };
+  if ($('#stCls')) $('#stCls').onchange = (e) => { ui.filterCls = e.target.value; render(); };
+  $('#stHide').onchange = (e) => { ui.hideDone = e.target.checked; render(); };
+  el.querySelectorAll('.tcard').forEach((b) => b.onclick = () => {
+    ui.cls = b.dataset.cls; ui.quickTask = b.dataset.id; ui.view = 'check'; render();
+  });
+}
+
+// ===== チェック入力 =====
+function renderCheck() {
+  const el = $('#view-check');
+  const ns = needSetup(); if (ns) { el.innerHTML = ns; return; }
+  const c = ensureCls();
+  const allTasks = tasksOf(c.name);
+  if (!allTasks.find((t) => t.id === ui.quickTask)) ui.quickTask = allTasks[0] ? allTasks[0].id : null;
+  let ts = ui.chkHideDone ? allTasks.filter((t) => missingNos(t, c).length) : allTasks;
+  const hasNames = c.names.some(Boolean);
+  let rows = '';
+  for (let n = 1; n <= c.count; n++) {
+    if (ui.onlyMissing && ts.every((t) => isChecked(t.id, c.name, n))) continue;
+    rows += `<tr><td class="sticky"><b>${n}</b>${hasNames ? ` <span class="muted">${esc(stuName(c, n))}</span>` : ''}</td>` +
+      ts.map((t) => {
+        const on = isChecked(t.id, c.name, n);
+        return `<td><button class="cell${on ? ' on' : ''}${!on && isOverdue(t) ? ' late' : ''}" data-id="${t.id}" data-no="${n}" aria-label="${n}番 ${esc(t.name)}">${on ? '✓' : ''}</button></td>`;
+      }).join('') + '</tr>';
+  }
+  el.innerHTML = `
+    <div class="card">
+      <div class="row">
+        ${state.mode === 'multi' ? `<label class="f">クラス<select id="ckCls">${classOptions(c.name)}</select></label>` : `<b>${esc(c.name)}</b>`}
+        <label class="chk"><input type="checkbox" id="ckHide"${ui.chkHideDone ? ' checked' : ''}> 完了した提出物を隠す</label>
+        <label class="chk"><input type="checkbox" id="ckOnly"${ui.onlyMissing ? ' checked' : ''}> 未提出のある番号だけ</label>
+        <button class="btn" id="ckUndo" style="margin-left:auto"${undoStack.length ? '' : ' disabled'}>↶ 取り消し</button>
+      </div>
+    </div>
+    ${allTasks.length ? `
+    <div class="card quick">
+      <div class="row">
+        <b style="font-size:14px">番号で入力</b>
+        <select id="qTask">${allTasks.map((t) => `<option value="${t.id}"${t.id === ui.quickTask ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+        <input id="qNo" inputmode="numeric" autocomplete="off" placeholder="番号">
+        <span class="muted">番号を入れて Enter。続けて次の番号を入力できます。</span>
+      </div>
+      <div class="lastmsg" id="qMsg">${ui.lastMsg}</div>
+    </div>
+    <div class="tablewrap">
+      <table class="grid">
+        <thead><tr><th class="sticky">番号${hasNames ? '・氏名' : ''}</th>${ts.map((t) => {
+          const m = missingNos(t, c).length;
+          return `<th><div class="th-name">${esc(t.name)}</div><div class="th-sub">${c.count - m}/${c.count}・${t.due ? '〆' + md(t.due) : '締切なし'}</div></th>`;
+        }).join('')}</tr></thead>
+        <tbody>${rows || `<tr><td class="sticky" colspan="${ts.length + 1}" style="padding:16px">全員提出しています。</td></tr>`}</tbody>
+      </table>
+    </div>
+    <p class="muted">マスを押すと ✓（提出）になり、もう一度押すと外れます。赤いマスは締切を過ぎた未提出です。</p>`
+    : `<div class="card empty">このクラスが対象の提出物はまだありません。<br><br><button class="btn primary" data-go="tasks" data-add="1">＋ 提出物を追加</button></div>`}`;
+
+  if ($('#ckCls')) $('#ckCls').onchange = (e) => { ui.cls = e.target.value; ui.lastMsg = ''; render(); };
+  $('#ckHide').onchange = (e) => { ui.chkHideDone = e.target.checked; render(); };
+  $('#ckOnly').onchange = (e) => { ui.onlyMissing = e.target.checked; render(); };
+  $('#ckUndo').onclick = () => {
+    const u = undoStack.pop(); if (!u) return;
+    setCheck(u.cls, u.id, u.no, u.prev, false);
+    const t = state.tasks.find((x) => x.id === u.id);
+    ui.lastMsg = `取り消しました：${u.cls} ${u.no}番「${t ? esc(t.name) : ''}」`;
+    if (u.cls !== ui.cls && getCls(u.cls)) ui.cls = u.cls;
+    render();
+  };
+  const tbody = el.querySelector('table.grid');
+  if (tbody) tbody.addEventListener('click', (e) => {
+    const b = e.target.closest('.cell'); if (!b) return;
+    const no = +b.dataset.no, id = b.dataset.id;
+    const sx = $('.tablewrap').scrollLeft, sy = $('.tablewrap').scrollTop;
+    setCheck(c.name, id, no, !isChecked(id, c.name, no));
+    render();
+    $('.tablewrap').scrollLeft = sx; $('.tablewrap').scrollTop = sy;
+  });
+  if ($('#qTask')) {
+    $('#qTask').onchange = (e) => { ui.quickTask = e.target.value; ui.lastMsg = ''; render(); $('#qNo').focus(); };
+    $('#qNo').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      const raw = e.target.value.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).trim();
+      const no = parseInt(raw, 10);
+      const t = state.tasks.find((x) => x.id === ui.quickTask);
+      if (!t) return;
+      if (!(no >= 1 && no <= c.count)) { $('#qMsg').innerHTML = `<span style="color:var(--c-over)">1〜${c.count}の番号を入力してください</span>`; e.target.select(); return; }
+      if (isChecked(t.id, c.name, no)) {
+        ui.lastMsg = `<span style="color:var(--c-few)">${no}番はすでにチェック済みです</span>`;
+      } else {
+        setCheck(c.name, t.id, no, true);
+        const left = missingNos(t, c);
+        ui.lastMsg = `✓ ${esc(stuLabel(c, no))} をチェックしました。「${esc(t.name)}」残り${left.length}人${left.length && left.length <= 10 ? '（' + nosText(left) + '）' : ''}`;
+      }
+      ui.focusQuick = true; render();
+    });
+    if (ui.focusQuick) { ui.focusQuick = false; $('#qNo').focus(); }
+  }
+}
+
+// ===== 声かけビュー =====
+function renderCall() {
+  const el = $('#view-call');
+  const ns = needSetup(); if (ns) { el.innerHTML = ns; return; }
+  if (ui.callCls && !getCls(ui.callCls)) ui.callCls = '';
+  const classes = ui.callCls ? [getCls(ui.callCls)] : activeClasses();
+  copyTexts = [];
+  const addCopy = (txt) => { copyTexts.push(txt); return copyTexts.length - 1; };
+  let body = '', watch = [];
+  for (const c of classes) {
+    const ts = tasksOf(c.name).filter((t) => !ui.overdueOnly || isOverdue(t));
+    const lines = [];
+    let rows = '';
+    for (let n = 1; n <= c.count; n++) {
+      const miss = ts.filter((t) => !isChecked(t.id, c.name, n));
+      if (!miss.length) continue;
+      const names = miss.map((t) => t.name);
+      const line = `${stuLabel(c, n)}：${names.join('、')}`;
+      lines.push(line);
+      if (ts.length >= 2 && miss.length >= 2) watch.push({ c, n, miss });
+      rows += `<div class="callrow"><div class="who">${esc(stuLabel(c, n))}</div>
+        <div class="what">${miss.map((t) => `${esc(t.name)}${isOverdue(t) ? ' <span class="badge b-over">超過</span>' : ''}`).join('、')}</div>
+        <span class="n">${miss.length}件</span>
+        <button class="btn small" data-copy="${addCopy(line)}">コピー</button></div>`;
+    }
+    const all = `【${c.name}】まだ確認できていない提出物\n` + (lines.join('\n') || 'なし');
+    body += `<div class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(c.name)}　<span class="muted">${lines.length}人</span></h2>
+      ${lines.length ? `<button class="btn" data-copy="${addCopy(all)}">このクラスをまとめてコピー</button>` : ''}</div>
+      ${ts.length ? (rows || '<p class="muted">未提出はありません。</p>') : '<p class="muted">対象の提出物がありません。</p>'}
+    </div>`;
+  }
+  watch.sort((a, b) => b.miss.length - a.miss.length);
+  el.innerHTML = `
+    <div class="card">
+      <div class="row">
+        ${state.mode === 'multi' ? `<label class="f">クラス<select id="cvCls">${classOptions(ui.callCls, true)}</select></label>` : ''}
+        <label class="chk"${state.mode === 'multi' ? ' style="margin-top:14px"' : ''}><input type="checkbox" id="cvOver"${ui.overdueOnly ? ' checked' : ''}> 締切を過ぎた提出物だけ</label>
+      </div>
+      <p class="muted" style="margin:8px 0 0">未提出を生徒ごとにまとめています。「3番：ワークブック、英作文」のように、一度の声かけで伝えられます。</p>
+    </div>
+    ${watch.length ? `<div class="card"><h2>要注意リスト（未提出が2件以上重なっている番号）</h2>
+      <div class="note">理由を決めつけるためのリストではありません。忘れているのかもしれないし、何か事情があるのかもしれません。見落とさないための目印として使ってください。</div>
+      ${watch.map((w) => `<div class="callrow"><div class="who">${state.mode === 'multi' && !ui.callCls ? esc(w.c.name) + ' ' : ''}${esc(stuLabel(w.c, w.n))}</div>
+        <div class="what">${w.miss.map((t) => esc(t.name)).join('、')}</div><span class="n">${w.miss.length}件</span></div>`).join('')}
+    </div>` : ''}
+    ${body}`;
+  if ($('#cvCls')) $('#cvCls').onchange = (e) => { ui.callCls = e.target.value; render(); };
+  $('#cvOver').onchange = (e) => { ui.overdueOnly = e.target.checked; render(); };
+  el.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copyText(copyTexts[+b.dataset.copy]));
+}
+
+// ===== 印刷プレビュー =====
+function renderPrint() {
+  const el = $('#view-print');
+  if (!activeClasses().length) { el.innerHTML = needSetup(); return; }
+  if (!getCls(ui.printCls) || !activeClasses().includes(getCls(ui.printCls))) ui.printCls = activeClasses()[0].name;
+  const c = getCls(ui.printCls);
+  const ts = tasksOf(c.name);
+  const hasNames = c.names.some(Boolean);
+  const nowTxt = `${md(todayStr())}現在`;
+  let pages = '';
+  if (ui.printType === 'class') {
+    if (!ts.length) pages = '<div class="page"><p>このクラスが対象の提出物はありません。</p></div>';
+    // 1ページあたり最大12列。多いときはページを分ける
+    for (let s = 0; s < ts.length; s += 12) {
+      const part = ts.slice(s, s + 12);
+      const showName = hasNames && ui.printNames;
+      pages += `<div class="page"><h2>${esc(c.name)} 提出物の状況</h2><div class="sub">${nowTxt}　✓＝提出済み／空欄＝まだ確認できていません</div>
+        <table><thead><tr><th style="width:${showName ? 26 : 34}px">番号</th>${showName ? '<th style="width:90px">氏名</th>' : ''}
+        ${part.map((t) => `<th>${esc(t.name)}<br>${t.due ? '〆' + md(t.due) : ''}</th>`).join('')}</tr></thead><tbody>
+        ${Array.from({ length: c.count }, (_, i) => i + 1).map((n) => `<tr><td>${n}</td>${showName ? `<td style="text-align:left">${esc(stuName(c, n))}</td>` : ''}
+          ${part.map((t) => isChecked(t.id, c.name, n) ? '<td>✓</td>' : '<td class="miss"></td>').join('')}</tr>`).join('')}
+        <tr><td colspan="${showName ? 2 : 1}">提出</td>${part.map((t) => `<td>${c.count - missingNos(t, c).length}/${c.count}</td>`).join('')}</tr>
+        </tbody></table></div>`;
+    }
+  } else if (ui.printType === 'personal') {
+    const targets = [];
+    for (let n = 1; n <= c.count; n++) {
+      if (ui.printStu !== 'all' && +ui.printStu !== n) continue;
+      const miss = ts.filter((t) => !isChecked(t.id, c.name, n));
+      if (miss.length || ui.printStu !== 'all') targets.push({ n, miss });
+    }
+    const slips = targets.map(({ n, miss }) => `<div class="slip"><h3>${esc(c.name)}　${esc(stuLabel(c, n))}さんへ</h3>
+      <div class="foot">${nowTxt}、まだ確認できていない提出物です。</div>
+      ${miss.length ? `<ul>${miss.map((t) => `<li>${esc(t.name)}${t.due ? `（締切 ${md(t.due)}）` : ''}</li>`).join('')}</ul>` : '<p>すべて提出済みです。ありがとう！</p>'}
+      <div class="foot">提出したら先生に声をかけてください。行き違いで提出済みの場合も教えてください。</div></div>`);
+    if (!slips.length) pages = '<div class="page"><p>未提出のある生徒はいません。</p></div>';
+    for (let i = 0; i < slips.length; i += 4) pages += `<div class="page">${slips.slice(i, i + 4).join('')}</div>`;
+  } else {
+    const cols = Math.max(1, Math.min(16, +ui.blankCols || 10));
+    pages = `<div class="page"><h2>${esc(ui.blankTitle || c.name + ' 提出物チェック表')}</h2><div class="sub">${esc(c.name)}　　月　　日〜</div>
+      <table><thead><tr><th style="width:34px">番号</th>${hasNames && ui.printNames ? '<th style="width:90px">氏名</th>' : ''}${'<th style="height:52px"></th>'.repeat(cols)}</tr></thead><tbody>
+      ${Array.from({ length: c.count }, (_, i) => `<tr><td>${i + 1}</td>${hasNames && ui.printNames ? `<td style="text-align:left">${esc(stuName(c, i + 1))}</td>` : ''}${'<td></td>'.repeat(cols)}</tr>`).join('')}
+      </tbody></table></div>`;
+  }
+  el.innerHTML = `
+    <div class="card noprint">
+      <div class="row" style="align-items:flex-end">
+        <label class="f">内容<select id="pType">
+          <option value="class">クラス別（掲示用）</option><option value="personal">個人別（本人に渡す）</option><option value="blank">白紙のチェック表</option>
+        </select></label>
+        ${state.mode === 'multi' ? `<label class="f">クラス<select id="pCls">${classOptions(c.name)}</select></label>` : ''}
+        ${ui.printType === 'personal' ? `<label class="f">生徒<select id="pStu"><option value="all">未提出がある全員</option>
+          ${Array.from({ length: c.count }, (_, i) => `<option value="${i + 1}"${String(i + 1) === String(ui.printStu) ? ' selected' : ''}>${esc(stuLabel(c, i + 1))}</option>`).join('')}</select></label>` : ''}
+        ${ui.printType === 'blank' ? `<label class="f">列の数<input id="pCols" type="number" min="1" max="16" value="${ui.blankCols}" style="width:70px"></label>
+          <label class="f">表題<input id="pTitle" value="${esc(ui.blankTitle)}" placeholder="${esc(c.name)} 提出物チェック表"></label>` : ''}
+        ${ui.printType !== 'personal' && hasNames ? `<label class="chk"><input type="checkbox" id="pNames"${ui.printNames ? ' checked' : ''}> 氏名を表示</label>` : ''}
+        <button class="btn primary" id="pPrint" style="margin-left:auto">印刷</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">A4で印刷できます。PDFにするときは、印刷画面の送信先で「PDFに保存」を選んでください。${ui.printType === 'class' && hasNames ? '掲示する場合は、氏名を表示しない設定をおすすめします。' : ''}${ui.printType === 'personal' ? '1枚に4人分です。点線で切って渡せます。' : ''}</p>
+    </div>
+    <div class="pages">${pages}</div>`;
+  $('#pType').value = ui.printType;
+  $('#pType').onchange = (e) => { ui.printType = e.target.value; render(); };
+  if ($('#pCls')) $('#pCls').onchange = (e) => { ui.printCls = e.target.value; ui.printStu = 'all'; render(); };
+  if ($('#pStu')) $('#pStu').onchange = (e) => { ui.printStu = e.target.value; render(); };
+  if ($('#pCols')) $('#pCols').onchange = (e) => { ui.blankCols = e.target.value; render(); };
+  if ($('#pTitle')) $('#pTitle').onchange = (e) => { ui.blankTitle = e.target.value; render(); };
+  if ($('#pNames')) $('#pNames').onchange = (e) => { ui.printNames = e.target.checked; render(); };
+  $('#pPrint').onclick = () => window.print();
+}
+
+// ===== 提出物（＋クラス設定・データ） =====
+function newTaskDraft() {
+  const cs = activeClasses();
+  return { id: null, name: '', classes: cs.length === 1 ? [cs[0].name] : [], told: todayStr(), due: '' };
+}
+function renderTasks() {
+  const el = $('#view-tasks');
+  const classes = activeClasses();
+  const ed = ui.editing;
+  const names = [...new Set([...SUGGEST, ...state.tasks.map((t) => t.name)])];
+  const tasks = state.tasks.slice().sort((a, b) => b.created - a.created);
+  if (!ui.classDraft) ui.classDraft = state.classes.map((c) => ({ name: c.name, count: c.count, names: c.names.slice(), oldName: c.name }));
+  const draft = ui.classDraft;
+  const visibleDraft = state.mode === 'single' ? draft.slice(0, 1) : draft;
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">提出物</h2>
+        ${ed ? '' : `<button class="btn primary" id="tAdd"${classes.length ? '' : ' disabled'}>＋ 追加</button>`}
+      </div>
+      ${!classes.length ? '<p class="muted">先に、下の「クラス設定」でクラス名と人数を登録してください。</p>' : ''}
+      ${ed ? `
+      <div class="card" style="background:var(--bg);margin:12px 0 0">
+        <div class="row" style="align-items:flex-end">
+          <label class="f">提出物名（必須）<input id="eName" list="suggest" value="${esc(ed.name)}" placeholder="例：Lesson 5 ワークブック" style="min-width:240px"></label>
+          <datalist id="suggest">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+          <label class="f">伝えた日<input id="eTold" type="date" value="${ed.told}"></label>
+          <label class="f">締切<input id="eDue" type="date" value="${ed.due}"></label>
+        </div>
+        ${classes.length > 1 ? `<div class="f" style="margin-top:10px">対象クラス（必須・複数選択できます）</div>
+        <div class="row" style="margin-top:4px">
+          ${classes.map((c) => `<label class="chk"><input type="checkbox" class="eCls" value="${esc(c.name)}"${ed.classes.includes(c.name) ? ' checked' : ''}> ${esc(c.name)}</label>`).join('')}
+          <button class="btn small" id="eAll">すべて選択</button>
+        </div>` : ''}
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="eSave">${ed.id ? '更新する' : '追加する'}</button>
+          <button class="btn" id="eCancel">キャンセル</button>
+        </div>
+      </div>` : ''}
+      ${tasks.length ? `<div style="overflow-x:auto;margin-top:12px"><table class="list"><thead><tr><th>提出物名</th>${state.mode === 'multi' ? '<th>対象クラス</th>' : ''}<th>伝えた日</th><th>締切</th><th>提出</th><th></th></tr></thead><tbody>
+        ${tasks.map((t) => {
+          const cs = t.classes.map(getCls).filter((c) => c && classes.includes(c));
+          const tot = cs.reduce((s, c) => s + c.count, 0), done = cs.reduce((s, c) => s + c.count - missingNos(t, c).length, 0);
+          return `<tr><td><b>${esc(t.name)}</b></td>${state.mode === 'multi' ? `<td>${t.classes.map(esc).join('、')}</td>` : ''}
+            <td>${t.told ? md(t.told) : '−'}</td><td>${t.due ? md(t.due) : '−'}</td><td>${done}/${tot}</td>
+            <td style="text-align:right;white-space:nowrap"><button class="btn small" data-edit="${t.id}">編集</button>
+            <button class="btn small danger" data-del="${t.id}">削除</button></td></tr>`;
+        }).join('')}</tbody></table></div>` : '<p class="muted">まだ提出物はありません。</p>'}
+    </div>
+
+    <div class="card">
+      <h2>クラス設定</h2>
+      <div class="row" style="margin-bottom:10px">
+        <span class="muted">使い方：</span>
+        <label class="chk"><input type="radio" name="mode" value="single"${state.mode === 'single' ? ' checked' : ''}> 1クラスで使う</label>
+        <label class="chk"><input type="radio" name="mode" value="multi"${state.mode === 'multi' ? ' checked' : ''}> 複数クラスで使う</label>
+      </div>
+      <table class="list"><thead><tr><th>クラス名</th><th>人数</th><th>名前（任意）</th><th></th></tr></thead><tbody>
+        ${visibleDraft.map((c, i) => `<tr>
+          <td><input class="cName" data-i="${i}" value="${esc(c.name)}" placeholder="例：2年3組" style="width:130px"></td>
+          <td><input class="cCount" data-i="${i}" type="number" min="1" max="${MAX_STUDENTS}" value="${c.count}" style="width:70px"></td>
+          <td><button class="btn small" data-roster="${i}">${c.names.some(Boolean) ? `入力済み（${c.names.filter(Boolean).length}人）` : '入力しない'}</button></td>
+          <td style="text-align:right"><button class="btn small danger" data-cdel="${i}">削除</button></td></tr>
+          ${ui.openRoster === i ? `<tr><td colspan="4">
+            <div class="muted">1行に1人、出席番号順に貼り付けてください（Excelの「番号・氏名」2列でも可）。空欄のままでも使えます。名前を入れるかどうかは学校のルールに合わせてください。</div>
+            <textarea class="cNames" data-i="${i}">${esc(c.names.join('\n').replace(/\n+$/, ''))}</textarea></td></tr>` : ''}`).join('')}
+      </tbody></table>
+      <div class="row" style="margin-top:10px">
+        ${state.mode === 'single' && visibleDraft.length >= 1 ? '' : `<button class="btn" id="cAdd"${draft.length >= MAX_CLASSES ? ' disabled' : ''}>＋ クラスを追加</button>`}
+        <button class="btn primary" id="cSave">クラス設定を保存</button>
+        <span class="muted">最大${MAX_CLASSES}クラス、1クラス${MAX_STUDENTS}人まで。</span>
+      </div>
+      ${IS_GAS ? '<p class="muted">保存すると「設定」シートとクラスごとのシートに反映されます。シートを直接編集した場合は、メニュー「⚙ 提出物チェッカー」→「クラスシートを生成」を実行してから、この画面を開き直してください。</p>' : ''}
+    </div>
+
+    <div class="card">
+      <h2>データ</h2>
+      <p class="muted">${IS_GAS ? 'データはこのスプレッドシートの中だけに保存されます。外部へ送信することはありません。'
+        : 'データはこの端末のブラウザの中だけに保存されます。外部へ送信することはありません。端末を替えるときやブラウザのデータを消す前に、バックアップを保存してください。'}</p>
+      <div class="row">
+        ${IS_GAS ? '' : `<button class="btn" id="dBackup">バックアップを保存</button>
+        <label class="btn">バックアップから復元<input type="file" id="dRestore" accept=".json,application/json" class="hidden"></label>`}
+        <button class="btn" id="dSample">サンプルデータを入れる</button>
+        <button class="btn danger" id="dReset">サンプルデータを消して初期化</button>
+      </div>
+    </div>`;
+
+  // 提出物
+  if ($('#tAdd')) $('#tAdd').onclick = () => { ui.editing = newTaskDraft(); render(); $('#eName').focus(); };
+  if (ed) {
+    const sync = () => {
+      ed.name = $('#eName').value; ed.told = $('#eTold').value; ed.due = $('#eDue').value;
+      if (classes.length > 1) ed.classes = [...el.querySelectorAll('.eCls:checked')].map((x) => x.value);
+    };
+    if ($('#eAll')) $('#eAll').onclick = () => { sync(); ed.classes = classes.map((c) => c.name); render(); };
+    $('#eCancel').onclick = () => { ui.editing = null; render(); };
+    $('#eSave').onclick = () => {
+      sync();
+      const name = ed.name.trim();
+      if (!name) return toast('提出物名を入力してください');
+      if (!ed.classes.length) return toast('対象クラスを選んでください');
+      if (ed.told && ed.due && ed.due < ed.told) return toast('締切が伝えた日より前になっています');
+      const old = state.tasks.find((t) => t.id === ed.id);
+      // 1クラスモードで編集しても、他クラスへの割り当ては残す
+      const hidden = old ? old.classes.filter((n) => !classes.find((c) => c.name === n)) : [];
+      upsertTask({ id: ed.id || newId(), name, classes: [...hidden, ...ed.classes], told: ed.told, due: ed.due, created: old ? old.created : Date.now() });
+      toast(old ? '更新しました' : `「${name}」を追加しました`);
+      ui.editing = null; render();
+    };
+  }
+  el.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => {
+    const t = state.tasks.find((x) => x.id === b.dataset.edit);
+    ui.editing = { id: t.id, name: t.name, classes: t.classes.slice(), told: t.told, due: t.due };
+    render(); window.scrollTo(0, 0);
+  });
+  el.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => {
+    const t = state.tasks.find((x) => x.id === b.dataset.del);
+    if (!confirm(`「${t.name}」と、そのチェック記録を削除します。よろしいですか？`)) return;
+    removeTask(t.id); render();
+  });
+
+  // クラス設定
+  const syncDraft = () => {
+    el.querySelectorAll('.cName').forEach((x) => draft[+x.dataset.i].name = x.value);
+    el.querySelectorAll('.cCount').forEach((x) => draft[+x.dataset.i].count = x.value);
+    el.querySelectorAll('.cNames').forEach((x) => {
+      draft[+x.dataset.i].names = x.value.split(/\r?\n/).map((l) => {
+        const p = l.split('\t').map((s) => s.trim()).filter(Boolean);
+        return p.length >= 2 && /^\d+$/.test(p[0]) ? p.slice(1).join(' ') : l.trim();
+      });
+    });
+  };
+  el.querySelectorAll('input[name=mode]').forEach((r) => r.onchange = () => {
+    if (r.value === 'single' && state.classes.length > 1 && !confirm('1クラスで使う場合、一番上のクラスだけを表示します（他のクラスのデータは消えません）。切り替えますか？')) { render(); return; }
+    setMode(r.value); render();
+  });
+  el.querySelectorAll('[data-roster]').forEach((b) => b.onclick = () => {
+    syncDraft(); const i = +b.dataset.roster; ui.openRoster = ui.openRoster === i ? null : i; render();
+  });
+  el.querySelectorAll('[data-cdel]').forEach((b) => b.onclick = () => {
+    syncDraft(); const i = +b.dataset.cdel;
+    if (draft[i].oldName && !confirm(`${draft[i].oldName} を削除します。保存すると、このクラスのチェック記録も消えます。よろしいですか？`)) return;
+    draft.splice(i, 1); ui.openRoster = null; render();
+  });
+  if ($('#cAdd')) $('#cAdd').onclick = () => { syncDraft(); draft.push({ name: '', count: 40, names: [], oldName: null }); render(); el.querySelectorAll('.cName')[draft.length - 1]?.focus(); };
+  $('#cSave').onclick = async () => {
+    syncDraft();
+    const list = (state.mode === 'single' ? [...visibleDraft, ...draft.slice(1)] : draft).map((c) => ({
+      name: String(c.name).trim(), count: parseInt(c.count, 10), names: c.names || [], oldName: c.oldName || null,
+    }));
+    for (const c of list) {
+      if (!c.name) return toast('クラス名が空欄の行があります');
+      if (/[\[\]\*\?\/\\:]/.test(c.name) || c.name === '設定' || c.name === '提出物') return toast(`「${c.name}」はクラス名に使えません`);
+      if (!(c.count >= 1 && c.count <= MAX_STUDENTS)) return toast(`人数は1〜${MAX_STUDENTS}人で入力してください`);
+      if (c.names.filter(Boolean).length > c.count) return toast(`${c.name}：名前の数が人数より多くなっています`);
+    }
+    if (new Set(list.map((c) => c.name)).size !== list.length) return toast('同じクラス名があります');
+    if (list.length > MAX_CLASSES) return toast(`クラスは${MAX_CLASSES}クラスまでです`);
+    $('#cSave').disabled = true;
+    if (await saveClasses(list)) { ui.classDraft = null; ui.openRoster = null; toast('クラス設定を保存しました'); }
+    render();
+  };
+
+  // データ
+  if ($('#dBackup')) $('#dBackup').onclick = () => {
+    const blob = new Blob([JSON.stringify(state, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `提出物チェッカー_${todayStr()}.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  if ($('#dRestore')) $('#dRestore').onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = async () => {
+      try {
+        const d = JSON.parse(r.result);
+        if (!Array.isArray(d.classes) || !Array.isArray(d.tasks)) throw new Error();
+        if (!confirm('今のデータを、バックアップの内容で置き換えます。よろしいですか？')) return;
+        await importState(d); toast('復元しました'); render();
+      } catch (err) { alert('バックアップファイルを読み込めませんでした'); }
+    };
+    r.readAsText(f);
+  };
+  $('#dSample').onclick = async () => {
+    if ((state.classes.length || state.tasks.length) && !confirm('今のデータを消して、サンプルデータを入れます。よろしいですか？')) return;
+    await importState(buildSample()); ui.view = 'status'; toast('サンプルデータを入れました'); render();
+  };
+  $('#dReset').onclick = async () => {
+    if (!confirm('すべてのクラス・提出物・チェック記録を消して初期化します。元に戻せません。よろしいですか？')) return;
+    await importState(Object.assign(emptyState(), { mode: state.mode })); toast('初期化しました'); render();
+  };
+}
+
+// ===== 使い方 =====
+function renderHelp() {
+  $('#view-help').innerHTML = `<div class="card help">
+    <h2>使い方</h2>
+    <p>登録する。チェックする。残っている番号を見る。毎日の回収確認は、この流れだけです。</p>
+    <h3>はじめの準備</h3>
+    <ol>
+      <li>「提出物」画面の下にある「クラス設定」で、クラス名と人数を入れて「クラス設定を保存」を押します（最大${MAX_CLASSES}クラス、1クラス${MAX_STUDENTS}人まで）。</li>
+      <li>名前は入れなくても使えます。出席番号だけで、チェック・声かけ・印刷まで動きます。</li>
+      ${IS_GAS ? '<li>スプレッドシートの「設定」シートに直接入力した場合は、メニュー「⚙ 提出物チェッカー」→「クラスシートを生成」を実行します。</li>' : ''}
+    </ol>
+    <h3>提出物を登録する</h3>
+    <ol>
+      <li>「提出物」→「＋ 追加」を押します。</li>
+      <li>提出物名と対象クラスを選びます（この二つだけが必須です）。「ワークブック」「単語テスト直し」などは候補から選べます。</li>
+      <li>「伝えた日」を入れると配ってからの日数が、「締切」を入れると今日締切・締切超過が分かるようになります。</li>
+    </ol>
+    <h3>チェックする</h3>
+    <ul>
+      <li>「チェック入力」でクラスを選び、出した子の番号と提出物が交わるマスを押します。もう一度押すと外れます。</li>
+      <li>冊数が多いときは「番号で入力」が便利です。提出物を選び、番号を入れて Enter。続けて次の番号を入力できます。</li>
+      <li>間違えたときは「↶ 取り消し」で直前の操作を戻せます。</li>
+      <li>「完了した提出物を隠す」「未提出のある番号だけ」で表示を絞れます。</li>
+    </ul>
+    <h3>残っている番号を見る</h3>
+    <ul>
+      <li>「回収状況」では、今日が締切の提出物が上に並びます。カードの色は <span class="badge b-collect">回収中</span> <span class="badge b-few">あと5人以下</span> <span class="badge b-over">締切超過</span> <span class="badge b-done">全員提出</span> です。</li>
+      <li>「声かけビュー」では、未提出を生徒ごとにまとめます。「3番：ワークブック、英作文」をそのままコピーできます。</li>
+      <li>未提出が2件以上重なっている番号は「要注意リスト」に出ます。理由を決めつけるためではなく、見落とさないための目印です。</li>
+    </ul>
+    <h3>紙にする</h3>
+    <ul>
+      <li>「印刷プレビュー」で、クラス別（掲示用）・個人別（本人に渡す）・白紙のチェック表をA4で印刷・PDF保存できます。</li>
+    </ul>
+    <h3>安心して使うために</h3>
+    <ul>
+      <li>データは${IS_GAS ? 'このスプレッドシート' : 'この端末のブラウザ'}の中だけに保存し、外部へは送りません。</li>
+      <li>評価や点数を書く欄はありません。記録するのは「出したか、まだか」だけです。</li>
+      <li>名前を入れるかどうかは、学校のルールに合わせて判断してください。</li>
+    </ul>
+  </div>`;
+}
+
+// ===== 起動 =====
+document.querySelectorAll('#modeDlg [data-mode]').forEach((b) => b.onclick = async () => {
+  if (b.dataset.mode === 'sample') { await importState(buildSample()); ui.view = 'status'; render(); return; }
+  setMode(b.dataset.mode);
+  if (!state.classes.length) { ui.view = 'tasks'; toast('まず、クラス名と人数を登録してください'); }
+  render();
+});
+reload();
+</script>
+</body>
+</html>
