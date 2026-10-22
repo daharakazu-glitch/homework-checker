@@ -940,6 +940,7 @@ function renderTasks() {
       <p class="muted">${IS_GAS ? 'データはあなたのGoogleドライブのスプレッドシートに保存されます。同じGoogleアカウントなら、どの端末からでも同じデータを使えます。外部へ送信することはありません。'
         : 'データはこの端末のブラウザの中だけに保存されます。外部へ送信することはありません。端末を替えるときやブラウザのデータを消す前に、バックアップを保存してください。'}</p>
       ${!IS_GAS ? '<p class="muted"><b>複数の端末で同じデータを使いたい場合</b>は、<a href="setup.html" target="_blank" rel="noopener">Googleアカウントで同期する設定</a>（初回だけ・約5分）をしてください。このブラウザのデータは「バックアップを保存」→ 同期版で「バックアップから復元」で引き継げます。</p>' : ''}
+      ${IS_GAS && state.user ? `<p class="muted">使用中のアカウント：<b>${esc(state.user)}</b>（データとメールの送り主は、このアカウントのものです）</p>` : ''}
       ${IS_GAS && state.sheetUrl ? `<p><a href="${esc(state.sheetUrl)}" target="_blank" rel="noopener">データのスプレッドシートを開く</a></p>` : ''}
       <div class="row">
         <button class="btn" id="dBackup">バックアップを保存</button>
