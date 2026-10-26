@@ -52,6 +52,10 @@ textarea { width: 100%; min-height: 110px; }
 .btn.small { font-size: 12px; padding: 3px 8px; }
 .btn:disabled { opacity: .45; cursor: default; }
 a.btn { text-decoration: none; display: inline-block; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; flex-wrap: wrap; }
+.seg button { font: inherit; font-size: 14px; border: none; background: var(--card); color: var(--text); padding: 8px 14px; cursor: pointer; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: none; }
+.seg button.on { background: var(--accent); color: #fff; font-weight: 700; }
 .muted { color: var(--muted); font-size: 13px; }
 .chk { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; cursor: pointer; }
 .hidden { display: none !important; }
@@ -192,7 +196,7 @@ let ui = {
   sort: 'due', filterCls: '', hideDone: false,
   chkHideDone: false, onlyMissing: false, quickTask: null, lastMsg: '', focusQuick: false,
   callCls: '', overdueOnly: false, mailSubject: '提出物の確認のお願い', mailSkip: {}, mailOpen: null,
-  printType: 'class', printCls: null, printStu: 'all', printNames: false, blankCols: 10, blankTitle: '',
+  printType: 'class', printCls: null, printStu: 'all', printSkipStop: true, printNames: false, blankCols: 10, blankTitle: '',
   editing: null, classDraft: null, openRoster: null,
 };
 let undoStack = [];
@@ -688,7 +692,8 @@ function mailCardHtml(c, ts) {
       <div class="muted">登録済み ${registered}/${c.count}人・${last}</div></div>
     <button class="btn small" data-mopen ${ca}${targets.length ? '' : ' disabled'}>${open ? '▲ 閉じる' : '▼ 送る相手を確認・除外'}</button>
     <button class="btn small" data-mprev ${ca}${sendList.length ? '' : ' disabled'}>文面を確認</button>
-    <button class="btn small primary" data-msend ${ca}${sendList.length ? '' : ' disabled'}>メールを送る（${sendList.length}人）</button></div>
+    <button class="btn small primary" data-msend ${ca}${sendList.length ? '' : ' disabled'}>メールを送る（${sendList.length}人）</button>
+    <button class="btn small" data-mletter ${ca}${targets.length || noMail.length ? '' : ' disabled'}>手紙を印刷</button></div>
     ${open ? `<div class="note" style="margin:8px 0 4px">
       チェックを外した生徒には、<b>今回だけ</b>送りません。事情があって提出できない生徒などは「今後も送らない」にすると、解除するまでメールを送りません（印刷や声かけビューには、これまでどおり表示されます）。
       <div class="row" style="margin-top:6px"><button class="btn small" data-mall="1" ${ca}>すべてチェック</button><button class="btn small" data-mall="0" ${ca}>すべて外す</button></div>
@@ -723,6 +728,9 @@ function setMailStop(c, no, on) {
 function bindMail(el) {
   const planOf = (b) => mailPlans[b.dataset.cls];
   if ($('#mSubject')) $('#mSubject').onchange = (e) => { ui.mailSubject = e.target.value.trim() || '提出物の確認のお願い'; };
+  el.querySelectorAll('[data-mletter]').forEach((b) => b.onclick = () => {
+    ui.printType = 'personal'; ui.printCls = b.dataset.cls; ui.printStu = 'all'; ui.view = 'print'; render(); window.scrollTo(0, 0);
+  });
   el.querySelectorAll('[data-mopen]').forEach((b) => b.onclick = () => { ui.mailOpen = ui.mailOpen === b.dataset.cls ? null : b.dataset.cls; render(); });
   el.querySelectorAll('[data-mskip]').forEach((b) => b.onchange = () => {
     const skip = ui.mailSkip[b.dataset.cls];
@@ -800,10 +808,14 @@ function renderPrint() {
     }
   } else if (ui.printType === 'personal') {
     const targets = [];
+    const group = ui.printStu === 'all' || ui.printStu === 'nomail';
+    const stop = new Set(c.mailStop || []);
     for (let n = 1; n <= c.count; n++) {
-      if (ui.printStu !== 'all' && +ui.printStu !== n) continue;
+      if (!group && +ui.printStu !== n) continue;
+      if (ui.printStu === 'nomail' && EMAIL_RE.test(stuEmail(c, n))) continue;
+      if (group && ui.printSkipStop && stop.has(n)) continue;
       const miss = ts.filter((t) => !isChecked(t.id, c.name, n));
-      if (miss.length || ui.printStu !== 'all') targets.push({ n, miss });
+      if (miss.length || !group) targets.push({ n, miss });
     }
     const slips = targets.map(({ n, miss }) => `<div class="slip"><h3>${esc(c.name)}　${esc(stuLabel(c, n))}さんへ</h3>
       <div class="foot">${nowTxt}、${MSG_INTRO}</div>
@@ -818,25 +830,31 @@ function renderPrint() {
       ${Array.from({ length: c.count }, (_, i) => `<tr><td>${i + 1}</td>${hasNames && ui.printNames ? `<td style="text-align:left">${esc(stuName(c, i + 1))}</td>` : ''}${'<td></td>'.repeat(cols)}</tr>`).join('')}
       </tbody></table></div>`;
   }
-  el.innerHTML = boardCardHtml() + `
+  const hasStop = (c.mailStop || []).length > 0;
+  el.innerHTML = `
     <div class="card noprint">
+      <div class="seg" id="pType" style="margin-bottom:12px">
+        <button data-ptype="class"${ui.printType === 'class' ? ' class="on"' : ''}>クラス別（掲示用）</button>
+        <button data-ptype="personal"${ui.printType === 'personal' ? ' class="on"' : ''}>個人別の手紙（本人に渡す）</button>
+        <button data-ptype="blank"${ui.printType === 'blank' ? ' class="on"' : ''}>白紙のチェック表</button>
+      </div>
       <div class="row" style="align-items:flex-end">
-        <label class="f">内容<select id="pType">
-          <option value="class">クラス別（掲示用）</option><option value="personal">個人別（本人に渡す）</option><option value="blank">白紙のチェック表</option>
-        </select></label>
         ${state.mode === 'multi' ? `<label class="f">クラス<select id="pCls">${classOptions(c.name)}</select></label>` : ''}
         ${ui.printType === 'personal' ? `<label class="f">生徒<select id="pStu"><option value="all">未提出がある全員</option>
+          ${IS_GAS ? `<option value="nomail"${ui.printStu === 'nomail' ? ' selected' : ''}>メールが届かない生徒だけ（メール未登録）</option>` : ''}
           ${Array.from({ length: c.count }, (_, i) => `<option value="${i + 1}"${String(i + 1) === String(ui.printStu) ? ' selected' : ''}>${esc(stuLabel(c, i + 1))}</option>`).join('')}</select></label>` : ''}
         ${ui.printType === 'blank' ? `<label class="f">列の数<input id="pCols" type="number" min="1" max="16" value="${ui.blankCols}" style="width:70px"></label>
           <label class="f">表題<input id="pTitle" value="${esc(ui.blankTitle)}" placeholder="${esc(c.name)} 提出物チェック表"></label>` : ''}
         ${ui.printType !== 'personal' && hasNames ? `<label class="chk"><input type="checkbox" id="pNames"${ui.printNames ? ' checked' : ''}> 氏名を表示</label>` : ''}
+        ${ui.printType === 'personal' && hasStop ? `<label class="chk"><input type="checkbox" id="pSkipStop"${ui.printSkipStop ? ' checked' : ''}> メール停止中の生徒（${nosText(c.mailStop)}）は印刷しない</label>` : ''}
         <button class="btn primary" id="pPrint" style="margin-left:auto">印刷</button>
       </div>
-      <p class="muted" style="margin:8px 0 0">A4で印刷できます。PDFにするときは、印刷画面の送信先で「PDFに保存」を選んでください。${ui.printType === 'class' && hasNames ? '掲示する場合は、氏名を表示しない設定をおすすめします。' : ''}${ui.printType === 'personal' ? '1枚に4人分です。点線で切って渡せます。' : ''}</p>
+      <p class="muted" style="margin:8px 0 0">A4で印刷できます。PDFにするときは、印刷画面の送信先で「PDFに保存」を選んでください。${ui.printType === 'class' && hasNames ? '掲示する場合は、氏名を表示しない設定をおすすめします。' : ''}${ui.printType === 'personal' ? 'メールと同じ文面の手紙です。1枚に4人分、点線で切って渡せます。' : ''}</p>
     </div>
+    ${boardCardHtml()}
     <div class="pages">${pages}</div>`;
-  $('#pType').value = ui.printType;
-  $('#pType').onchange = (e) => { ui.printType = e.target.value; render(); };
+  el.querySelectorAll('[data-ptype]').forEach((b) => b.onclick = () => { ui.printType = b.dataset.ptype; render(); });
+  if ($('#pSkipStop')) $('#pSkipStop').onchange = (e) => { ui.printSkipStop = e.target.checked; render(); };
   if ($('#pCls')) $('#pCls').onchange = (e) => { ui.printCls = e.target.value; ui.printStu = 'all'; render(); };
   if ($('#pStu')) $('#pStu').onchange = (e) => { ui.printStu = e.target.value; render(); };
   if ($('#pCols')) $('#pCols').onchange = (e) => { ui.blankCols = e.target.value; render(); };
@@ -1147,7 +1165,8 @@ function renderHelp() {
     </ul>
     <h3>紙にする</h3>
     <ul>
-      <li>「印刷プレビュー」で、クラス別（掲示用）・個人別（本人に渡す）・白紙のチェック表をA4で印刷・PDF保存できます。</li>
+      <li>「印刷プレビュー」で、クラス別（掲示用）・個人別の手紙（本人に渡す）・白紙のチェック表をA4で印刷・PDF保存できます。</li>
+      <li>個人別の手紙は、メールと同じ文面です。「声かけビュー」の「手紙を印刷」からも開けます。メールが届かない生徒（メール未登録）だけを印刷することもできます。</li>
     </ul>
     <h3>安心して使うために</h3>
     <ul>
