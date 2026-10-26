@@ -51,6 +51,7 @@ textarea { width: 100%; min-height: 110px; }
 .btn.danger { color: var(--c-over); }
 .btn.small { font-size: 12px; padding: 3px 8px; }
 .btn:disabled { opacity: .45; cursor: default; }
+a.btn { text-decoration: none; display: inline-block; }
 .muted { color: var(--muted); font-size: 13px; }
 .chk { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; cursor: pointer; }
 .hidden { display: none !important; }
@@ -817,7 +818,7 @@ function renderPrint() {
       ${Array.from({ length: c.count }, (_, i) => `<tr><td>${i + 1}</td>${hasNames && ui.printNames ? `<td style="text-align:left">${esc(stuName(c, i + 1))}</td>` : ''}${'<td></td>'.repeat(cols)}</tr>`).join('')}
       </tbody></table></div>`;
   }
-  el.innerHTML = `
+  el.innerHTML = boardCardHtml() + `
     <div class="card noprint">
       <div class="row" style="align-items:flex-end">
         <label class="f">内容<select id="pType">
@@ -842,6 +843,51 @@ function renderPrint() {
   if ($('#pTitle')) $('#pTitle').onchange = (e) => { ui.blankTitle = e.target.value; render(); };
   if ($('#pNames')) $('#pNames').onchange = (e) => { ui.printNames = e.target.checked; render(); };
   $('#pPrint').onclick = () => window.print();
+  bindBoard(el);
+}
+
+// ===== Classroomに掲示（生徒が見るだけの、リアルタイムの提出状況） =====
+function boardCardHtml() {
+  if (!IS_GAS) return '';
+  const rows = activeClasses().map((c) => {
+    const b = (state.boards || {})[c.name];
+    const ca = `data-cls="${esc(c.name)}"`;
+    if (!b) return `<div class="callrow" style="align-items:center"><div class="who">${esc(c.name)}</div>
+      <div class="what muted">まだ作っていません</div>
+      <button class="btn small primary" data-bcreate ${ca}>掲示用リンクを作る</button></div>`;
+    const share = 'https://classroom.google.com/share?url=' + encodeURIComponent(b.url);
+    return `<div class="callrow" style="align-items:center;flex-wrap:wrap"><div class="who">${esc(c.name)}</div>
+      <div class="what">${b.shared ? '<span class="badge b-done">学校内に公開中（閲覧のみ）</span>' : '<span class="badge b-over">共有の設定が必要です</span>'}
+        ${b.shared ? '' : `<div class="muted">自動で共有できませんでした（${esc(b.shareError)}）。「開く」でファイルを開き、右上の「共有」→「一般的なアクセス」を学校名にして「閲覧者」を選んでください。</div>`}</div>
+      <a class="btn small" href="${esc(b.url)}" target="_blank" rel="noopener">開く</a>
+      <button class="btn small" data-bcopy ${ca}>リンクをコピー</button>
+      <a class="btn small primary" href="${esc(share)}" target="_blank" rel="noopener">Classroomで共有</a>
+      <button class="btn small danger" data-bstop ${ca}>公開をやめる</button></div>`;
+  }).join('');
+  return `<div class="card noprint"><h2>Classroomに掲示（リアルタイム）</h2>
+    <p class="muted" style="margin:0 0 6px">クラスごとに、提出状況を見るだけのページ（Googleスプレッドシート）を作ります。チェックするとすぐ反映されるので、印刷して貼り直す必要はありません。生徒は見るだけで、編集はできません。表示されるのは出席番号と ✓ だけで、名前やメールアドレスは表示されません。</p>
+    ${rows}</div>`;
+}
+function bindBoard(el) {
+  el.querySelectorAll('[data-bcreate]').forEach((b) => b.onclick = async () => {
+    const cls = b.dataset.cls;
+    b.disabled = true; b.textContent = '作成中…';
+    try {
+      const info = await gas('createBoard', cls);
+      state.boards = state.boards || {};
+      state.boards[cls] = info;
+      toast(info.shared ? `${cls}の掲示用リンクを作りました` : `${cls}の掲示用ファイルを作りました（共有の設定が必要です）`);
+    } catch (e) { alert('作成できませんでした：' + (e && e.message || e)); }
+    render();
+  });
+  el.querySelectorAll('[data-bcopy]').forEach((b) => b.onclick = () => copyText(state.boards[b.dataset.cls].url));
+  el.querySelectorAll('[data-bstop]').forEach((b) => b.onclick = async () => {
+    const cls = b.dataset.cls;
+    if (!confirm(`${cls}の掲示用ページの公開をやめます。Classroomに貼ったリンクは開けなくなります（ファイルはゴミ箱に移ります）。よろしいですか？`)) return;
+    try { await gas('stopBoard', cls); delete state.boards[cls]; toast('公開をやめました'); }
+    catch (e) { alert('できませんでした：' + (e && e.message || e)); }
+    render();
+  });
 }
 
 // 名簿の1行（「番号」「氏名」「メール」をタブ・カンマ区切りで。番号は省略可、氏名・メールは空欄可）
@@ -1093,6 +1139,11 @@ function renderHelp() {
       <li>「声かけビュー」の「メールで知らせる」で「メールを送る」を押すと、未提出がある生徒一人ひとりに、本人の未提出だけを書いたメールがあなたのGmailから送られます。文面は個人別の用紙と同じです。</li>
       <li>送る前に「文面を確認」で内容を確かめられます。送信記録はスプレッドシートの「メール送信記録」シートに残ります。</li>
       <li>事情があって提出できない生徒などには、「送る相手を確認・除外」でチェックを外すと今回だけ送りません。「今後も送らない」にすると、解除するまで送りません。</li>
+    </ul>
+    <h3>Classroomに掲示する（同期版のみ）</h3>
+    <ul>
+      <li>「印刷プレビュー」の「Classroomに掲示」で「掲示用リンクを作る」を押すと、クラスの提出状況を見るだけのページができます。</li>
+      <li>「Classroomで共有」でそのまま投稿できます。チェックするとすぐ反映されるので、貼り直しは不要です。生徒は見るだけで、編集はできません。表示されるのは出席番号と ✓ だけです。</li>
     </ul>
     <h3>紙にする</h3>
     <ul>
