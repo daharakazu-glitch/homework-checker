@@ -20,6 +20,8 @@ const MAX_STUDENTS = 45;
 const TASK_HEADERS = ['ID', '提出物名', '対象クラス', '伝えた日', '締切', '作成日時'];
 const MAIL_MARK = '#MAIL';
 const SHEET_MAILLOG = 'メール送信記録';
+const BOARD_ID_ROW = 6;   // 掲示用シート：提出物IDの行（非表示）
+const BOARD_FIRST = 7;    // 掲示用シート：1番の生徒の行
 
 // ===== メニュー =====
 function onOpen() {
@@ -93,7 +95,9 @@ function getData() {
     const last = props_().getProperty('lastMail:' + c.name);
     return { name: c.name, count: c.count, names: names, emails: emails, lastMail: last ? JSON.parse(last) : null, mailStop: getMailStop_(c.name) };
   });
-  return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl(), user: userEmail_() };
+  const boards = {};
+  settings.forEach(function (c) { const b = getBoard_(c.name); if (b) boards[c.name] = b; });
+  return { mode: getMode_(), classes: classes, tasks: tasks, checks: checks, sheetUrl: ss_().getUrl(), user: userEmail_(), boards: boards };
 }
 
 function setCheck(clsName, taskId, no, on) {
@@ -107,6 +111,7 @@ function setCheck(clsName, taskId, no, on) {
       col = addTaskColumn_(sh, t);
     }
     sh.getRange(Number(no) + 2, col).setValue(on ? '✓' : '');
+    safely_(function () { updateBoardCell_(clsName, taskId, Number(no), on); });
     return true;
   });
 }
@@ -121,6 +126,7 @@ function saveTask(task) {
     };
     const tasks = readTasks_();
     const i = tasks.map(function (x) { return x.id; }).indexOf(t.id);
+    const affected = t.classes.concat(i >= 0 ? tasks[i].classes : []);
     if (i >= 0) tasks[i] = t; else tasks.push(t);
     writeTasks_(tasks);
     const settings = readSettings_();
@@ -129,17 +135,21 @@ function saveTask(task) {
       const col = colMap_(sh)[t.id];
       if (col) sh.getRange(1, col).setValue(t.name);
     });
+    renderBoards_(affected);
     return true;
   });
 }
 
 function deleteTask(taskId) {
   return withLock_(function () {
-    writeTasks_(readTasks_().filter(function (t) { return t.id !== taskId; }));
+    const all = readTasks_();
+    const old = all.filter(function (t) { return t.id === taskId; })[0];
+    writeTasks_(all.filter(function (t) { return t.id !== taskId; }));
     classSheets_().forEach(function (sh) {
       const col = colMap_(sh)[taskId];
       if (col) sh.deleteColumn(col);
     });
+    if (old) renderBoards_(old.classes);
     return true;
   });
 }
@@ -156,6 +166,7 @@ function saveClasses(list) {
     oldNames.filter(function (n) { return keep.indexOf(n) < 0; }).forEach(function (n) {
       const sh = ss.getSheetByName(n);
       if (sh && isClassSheet_(sh)) ss.deleteSheet(sh);
+      safely_(function () { removeBoard_(n); });
       tasks.forEach(function (t) { t.classes = t.classes.filter(function (x) { return x !== n; }); });
     });
     // 名前が変わったクラス（入れ替えにも対応するため、いったん仮の名前にする）
@@ -164,12 +175,13 @@ function saveClasses(list) {
       const sh = ss.getSheetByName(c.oldName);
       if (sh) sh.setName('__tmp__' + c.oldName);
     });
-    // クラスごとの設定（メール停止・前回送信）も新しい名前に移す
+    // クラスごとの設定（メール停止・前回送信・掲示用）も新しい名前に移す
     const props = props_();
+    const keys = ['mailStop:', 'lastMail:', 'board:'];
     const moved = renamed.map(function (c) {
-      return { name: c.name, values: ['mailStop:', 'lastMail:'].map(function (k) { return [k, props.getProperty(k + c.oldName)]; }) };
+      return { name: c.name, values: keys.map(function (k) { return [k, props.getProperty(k + c.oldName)]; }) };
     });
-    renamed.forEach(function (c) { props.deleteProperty('mailStop:' + c.oldName); props.deleteProperty('lastMail:' + c.oldName); });
+    renamed.forEach(function (c) { keys.forEach(function (k) { props.deleteProperty(k + c.oldName); }); });
     moved.forEach(function (m) { m.values.forEach(function (kv) { if (kv[1] !== null) props.setProperty(kv[0] + m.name, kv[1]); }); });
     renamed.forEach(function (c) {
       if (ss.getSheetByName(c.name)) throw new Error('同じ名前のシートがすでにあります：' + c.name);
@@ -191,6 +203,7 @@ function saveClasses(list) {
       const last = sh.getLastRow();
       if (last > c.count + 2) sh.getRange(c.count + 3, 1, last - c.count - 2, sh.getLastColumn()).clearContent();
     });
+    renderBoards_(list.map(function (c) { return c.name; }));
   });
   return getData();
 }
@@ -250,6 +263,7 @@ function getMailStop_(clsName) {
 // メール送信の許可を出すため、エディタで一度だけ実行する
 function authorize() {
   ss_();
+  DriveApp.getRootFolder();
   Logger.log('許可が完了しました。今日送れるメールはあと ' + MailApp.getRemainingDailyQuota() + ' 通です。');
 }
 
@@ -265,6 +279,8 @@ function importState(state) {
     const list = validateClasses_((state.classes || []).map(function (c) {
       return { name: c.name, count: c.count, names: c.names || [], emails: c.emails || [] };
     }));
+    // 掲示用は止める（サンプルや復元したデータが生徒に見えないように。必要なら作り直す）
+    readSettings_().forEach(function (c) { safely_(function () { removeBoard_(c.name); }); });
     // 既存のクラスシートを削除（シートが1枚だけにならないよう、基本シートは残る）
     classSheets_().forEach(function (sh) { ss.deleteSheet(sh); });
     const tasks = (state.tasks || []).map(function (t) {
@@ -293,6 +309,152 @@ function importState(state) {
     });
   });
   return getData();
+}
+
+// ===== 掲示用（生徒が見るだけの、クラスごとのスプレッドシート） =====
+// チェックのたびに書き換えるので、生徒はリンクを開くだけで最新の状況を見られる。
+// 共有は「学校内のリンクを知っている全員が閲覧のみ」。表示するのは出席番号と ✓ だけ（名前・メールは出さない）。
+function createBoard(clsName) {
+  return withLock_(function () {
+    if (!readSettings_().some(function (c) { return c.name === clsName; })) throw new Error('クラスが見つかりません：' + clsName);
+    let info = getBoard_(clsName);
+    let bss = null;
+    if (info) { try { bss = SpreadsheetApp.openById(info.id); } catch (e) { bss = null; } }
+    if (!bss) {
+      bss = SpreadsheetApp.create(boardTitle_(clsName));
+      info = { id: bss.getId(), url: bss.getUrl() };
+    }
+    info.shared = false;
+    info.shareError = '';
+    try {
+      DriveApp.getFileById(info.id).setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
+      info.shared = true;
+    } catch (e) {
+      info.shareError = e.message;
+    }
+    props_().setProperty('board:' + clsName, JSON.stringify(info));
+    renderBoard_(clsName);
+    return info;
+  });
+}
+
+function stopBoard(clsName) {
+  return withLock_(function () { removeBoard_(clsName); return true; });
+}
+
+function getBoard_(clsName) {
+  const v = props_().getProperty('board:' + clsName);
+  try { return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+
+function removeBoard_(clsName) {
+  const info = getBoard_(clsName);
+  props_().deleteProperty('board:' + clsName);
+  if (info) safely_(function () { DriveApp.getFileById(info.id).setTrashed(true); });
+}
+
+function boardTitle_(clsName) { return clsName + ' 提出物の状況'; }
+
+function renderBoards_(names) {
+  const seen = {};
+  (names || []).forEach(function (n) {
+    if (seen[n]) return;
+    seen[n] = true;
+    safely_(function () { renderBoard_(n); });
+  });
+}
+
+function boardSheet_(clsName) {
+  const info = getBoard_(clsName);
+  if (!info) return null;
+  const bss = SpreadsheetApp.openById(info.id);
+  if (bss.getName() !== boardTitle_(clsName)) bss.rename(boardTitle_(clsName));
+  const sh = bss.getSheets()[0];
+  if (sh.getName() !== '提出状況') sh.setName('提出状況');
+  return sh;
+}
+
+function nowText_() { return Utilities.formatDate(new Date(), ss_().getSpreadsheetTimeZone(), 'M/d HH:mm'); }
+
+// クラスの掲示用シートを、いまの記録から作り直す
+function renderBoard_(clsName) {
+  const c = readSettings_().filter(function (x) { return x.name === clsName; })[0];
+  if (!c) return;
+  const sh = boardSheet_(clsName);
+  if (!sh) return;
+  const tasks = readTasks_().filter(function (t) { return t.classes.indexOf(clsName) >= 0; })
+    .sort(function (a, b) { return a.created - b.created; });
+  const csh = ensureClassSheet_(clsName, c.count, tasks);
+  const map = colMap_(csh);
+  const cvals = csh.getRange(3, 1, c.count, Math.max(csh.getLastColumn(), 2)).getValues();
+  const width = Math.max(tasks.length + 1, 2);
+  const pad = function (row) { while (row.length < width) row.push(''); return row; };
+  const last = BOARD_FIRST + c.count - 1;
+  const colName = function (i) { let n = i + 1, s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+
+  const rows = [
+    pad([clsName + ' 提出物の状況']),
+    pad(['最終更新：' + nowText_()]),
+    pad(['✓＝提出済み　空欄＝まだ確認できていません（先生が確認すると、ここに反映されます）']),
+    pad(['番号'].concat(tasks.map(function (t) { return t.name; }))),
+    pad(['締切'].concat(tasks.map(function (t) { return t.due ? Number(t.due.slice(5, 7)) + '/' + Number(t.due.slice(8, 10)) : '−'; }))),
+    pad(['#ID'].concat(tasks.map(function (t) { return t.id; }))),
+  ];
+  const bgs = [];
+  for (let n = 1; n <= c.count; n++) {
+    const row = [n];
+    const bg = ['#ffffff'];
+    tasks.forEach(function (t) {
+      const col = map[t.id];
+      const on = col ? String(cvals[n - 1][col - 1]).trim() !== '' : false;
+      row.push(on ? '✓' : '');
+      bg.push(on ? '#ffffff' : '#eeeeee');
+    });
+    rows.push(pad(row));
+    while (bg.length < width) bg.push('#ffffff');
+    bgs.push(bg);
+  }
+  rows.push(pad(['提出'].concat(tasks.map(function (t, i) {
+    const L = colName(i + 1);
+    return '=COUNTIF(' + L + BOARD_FIRST + ':' + L + last + ',"✓")&"/' + c.count + '"';
+  }))));
+
+  sh.clear();
+  if (sh.getMaxColumns() < width) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
+  if (sh.getMaxRows() < rows.length) sh.insertRowsAfter(sh.getMaxRows(), rows.length - sh.getMaxRows());
+  sh.showRows(1, rows.length);
+  sh.getRange(1, 1, rows.length, width).setValues(rows).setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sh.getRange(1, 1, 3, width).setHorizontalAlignment('left');
+  sh.getRange(1, 1).setFontSize(16).setFontWeight('bold');
+  sh.getRange(2, 1, 2, 1).setFontColor('#555555');
+  sh.getRange(4, 1, 2, width).setFontWeight('bold').setBackground('#e6f2f0').setWrap(true);
+  sh.getRange(BOARD_FIRST, 1, c.count, width).setBackgrounds(bgs);
+  sh.getRange(BOARD_FIRST, 1, c.count, 1).setFontWeight('bold');
+  sh.getRange(rows.length, 1, 1, width).setFontWeight('bold').setBackground('#e6f2f0');
+  sh.getRange(4, 1, rows.length - 3, width).setBorder(true, true, true, true, true, true, '#bbbbbb', SpreadsheetApp.BorderStyle.SOLID);
+  sh.hideRows(BOARD_ID_ROW);
+  sh.setFrozenRows(BOARD_ID_ROW);
+  sh.setFrozenColumns(1);
+  sh.setColumnWidth(1, 60);
+  if (width > 1) sh.setColumnWidths(2, width - 1, 120);
+  if (!tasks.length) sh.getRange(4, 2).setValue('（まだ提出物がありません）');
+}
+
+// チェック1つ分だけ書き換える（列が見つからなければ全体を作り直す）
+function updateBoardCell_(clsName, taskId, no, on) {
+  const sh = boardSheet_(clsName);
+  if (!sh) return;
+  const ids = sh.getRange(BOARD_ID_ROW, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0];
+  const col = ids.indexOf(taskId) + 1;
+  const c = readSettings_().filter(function (x) { return x.name === clsName; })[0];
+  if (col < 2 || !c || no > c.count || sh.getRange(BOARD_FIRST + c.count - 1, 1).getValue() !== c.count) { renderBoard_(clsName); return; }
+  sh.getRange(BOARD_FIRST + no - 1, col).setValue(on ? '✓' : '').setBackground(on ? '#ffffff' : '#eeeeee');
+  sh.getRange(2, 1).setValue('最終更新：' + nowText_());
+}
+
+// 掲示用の更新に失敗しても、記録の保存は止めない
+function safely_(fn) {
+  try { fn(); } catch (e) { console.warn('掲示用の更新に失敗：' + e.message); }
 }
 
 // 画面（index.html）は、ファイルを小さくするため圧縮して埋め込んでいる（APP_HTML_GZ）
