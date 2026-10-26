@@ -118,6 +118,16 @@ table.grid thead .sticky { z-index: 3; }
 .slip h3 { margin: 0 0 4px; font-size: 15px; }
 .slip ul { margin: 6px 0; padding-left: 18px; font-size: 13px; }
 .slip .foot { font-size: 11px; color: #444; }
+.letter { display: flex; flex-direction: column; font-size: 15px; line-height: 1.8; }
+.letter .to { font-size: 22px; font-weight: 700; margin: 10mm 0 2mm; }
+.letter .date { text-align: right; font-size: 13px; color: #444; }
+.letter .lead { margin: 8mm 0 4mm; font-size: 16px; }
+.letter table { width: 100%; border-collapse: collapse; table-layout: auto; margin-bottom: 8mm; }
+.letter th, .letter td { border: 1px solid #555; padding: 6px 10px; font-size: 15px; height: auto; text-align: left; }
+.letter th { background: #f0f0f0; font-size: 13px; }
+.letter .due { width: 30mm; text-align: center; }
+.letter .msg { font-size: 15px; }
+.letter .done { font-size: 18px; margin: 10mm 0; }
 @page { size: A4; margin: 0; }
 @media print {
   body { background: #fff; }
@@ -196,7 +206,7 @@ let ui = {
   sort: 'due', filterCls: '', hideDone: false,
   chkHideDone: false, onlyMissing: false, quickTask: null, lastMsg: '', focusQuick: false,
   callCls: '', overdueOnly: false, mailSubject: '提出物の確認のお願い', mailSkip: {}, mailOpen: null,
-  printType: 'class', printCls: null, printStu: 'all', printSkipStop: true, printNames: false, blankCols: 10, blankTitle: '',
+  printType: 'class', printCls: null, printStu: 'all', printSkipStop: true, letterPer: 1, printNames: false, blankCols: 10, blankTitle: '',
   editing: null, classDraft: null, openRoster: null,
 };
 let undoStack = [];
@@ -791,7 +801,7 @@ function renderPrint() {
   const ts = tasksOf(c.name);
   const hasNames = c.names.some(Boolean);
   const nowTxt = `${md(todayStr())}現在`;
-  let pages = '';
+  let pages = '', pageCount = 0;
   if (ui.printType === 'class') {
     if (!ts.length) pages = '<div class="page"><p>このクラスが対象の提出物はありません。</p></div>';
     // 1ページあたり最大12列。多いときはページを分ける
@@ -817,12 +827,23 @@ function renderPrint() {
       const miss = ts.filter((t) => !isChecked(t.id, c.name, n));
       if (miss.length || !group) targets.push({ n, miss });
     }
+    const letters = targets.map(({ n, miss }) => `<div class="page letter">
+      <div class="date">${md(todayStr())}</div>
+      <div class="to">${esc(c.name)}　${esc(stuLabel(c, n))}さんへ</div>
+      ${miss.length ? `<div class="lead">${nowTxt}、${MSG_INTRO}</div>
+      <table><thead><tr><th>提出物</th><th class="due">締切</th></tr></thead><tbody>
+        ${miss.map((t) => `<tr><td>${esc(t.name)}</td><td class="due">${t.due ? md(t.due) : '−'}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="msg">${MSG_FOOT}</div>` : '<div class="done">すべて提出済みです。ありがとう！</div>'}
+</div>`);
     const slips = targets.map(({ n, miss }) => `<div class="slip"><h3>${esc(c.name)}　${esc(stuLabel(c, n))}さんへ</h3>
       <div class="foot">${nowTxt}、${MSG_INTRO}</div>
       ${miss.length ? `<ul>${miss.map((t) => `<li>${esc(taskLine(t))}</li>`).join('')}</ul>` : '<p>すべて提出済みです。ありがとう！</p>'}
       <div class="foot">${MSG_FOOT}</div></div>`);
+    pageCount = targets.length;
     if (!slips.length) pages = '<div class="page"><p>未提出のある生徒はいません。</p></div>';
-    for (let i = 0; i < slips.length; i += 4) pages += `<div class="page">${slips.slice(i, i + 4).join('')}</div>`;
+    else if (ui.letterPer === 1) pages = letters.join('');
+    else for (let i = 0; i < slips.length; i += 4) pages += `<div class="page">${slips.slice(i, i + 4).join('')}</div>`;
   } else {
     const cols = Math.max(1, Math.min(16, +ui.blankCols || 10));
     pages = `<div class="page"><h2>${esc(ui.blankTitle || c.name + ' 提出物チェック表')}</h2><div class="sub">${esc(c.name)}　　月　　日〜</div>
@@ -846,14 +867,16 @@ function renderPrint() {
         ${ui.printType === 'blank' ? `<label class="f">列の数<input id="pCols" type="number" min="1" max="16" value="${ui.blankCols}" style="width:70px"></label>
           <label class="f">表題<input id="pTitle" value="${esc(ui.blankTitle)}" placeholder="${esc(c.name)} 提出物チェック表"></label>` : ''}
         ${ui.printType !== 'personal' && hasNames ? `<label class="chk"><input type="checkbox" id="pNames"${ui.printNames ? ' checked' : ''}> 氏名を表示</label>` : ''}
+        ${ui.printType === 'personal' ? `<label class="f">用紙<select id="pPer"><option value="1"${ui.letterPer === 1 ? ' selected' : ''}>1枚に1人（手紙）</option><option value="4"${ui.letterPer === 4 ? ' selected' : ''}>1枚に4人（切って渡す）</option></select></label>` : ''}
         ${ui.printType === 'personal' && hasStop ? `<label class="chk"><input type="checkbox" id="pSkipStop"${ui.printSkipStop ? ' checked' : ''}> メール停止中の生徒（${nosText(c.mailStop)}）は印刷しない</label>` : ''}
         <button class="btn primary" id="pPrint" style="margin-left:auto">印刷</button>
       </div>
-      <p class="muted" style="margin:8px 0 0">A4で印刷できます。PDFにするときは、印刷画面の送信先で「PDFに保存」を選んでください。${ui.printType === 'class' && hasNames ? '掲示する場合は、氏名を表示しない設定をおすすめします。' : ''}${ui.printType === 'personal' ? 'メールと同じ文面の手紙です。1枚に4人分、点線で切って渡せます。' : ''}</p>
+      <p class="muted" style="margin:8px 0 0">A4で印刷できます。PDFにするときは、印刷画面の送信先で「PDFに保存」を選んでください。${ui.printType === 'class' && hasNames ? '掲示する場合は、氏名を表示しない設定をおすすめします。' : ''}${ui.printType === 'personal' ? (ui.letterPer === 1 ? `メールと同じ文面の手紙です。1人1枚で、対象の${pageCount}人分をまとめて印刷します。` : 'メールと同じ文面の手紙です。1枚に4人分、点線で切って渡せます。') : ''}</p>
     </div>
     ${boardCardHtml()}
     <div class="pages">${pages}</div>`;
   el.querySelectorAll('[data-ptype]').forEach((b) => b.onclick = () => { ui.printType = b.dataset.ptype; render(); });
+  if ($('#pPer')) $('#pPer').onchange = (e) => { ui.letterPer = +e.target.value; render(); };
   if ($('#pSkipStop')) $('#pSkipStop').onchange = (e) => { ui.printSkipStop = e.target.checked; render(); };
   if ($('#pCls')) $('#pCls').onchange = (e) => { ui.printCls = e.target.value; ui.printStu = 'all'; render(); };
   if ($('#pStu')) $('#pStu').onchange = (e) => { ui.printStu = e.target.value; render(); };
