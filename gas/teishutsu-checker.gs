@@ -24,6 +24,7 @@ const MAX_CLASSES = 10;
 const MAX_STUDENTS = 45;
 const TASK_HEADERS = ['ID', '提出物名', '対象クラス', '伝えた日', '締切', '作成日時'];
 const MAIL_MARK = '#MAIL';
+const TMP_PREFIX = '__tmp__';
 const SHEET_MAILLOG = 'メール送信記録';
 const BOARD_ID_ROW = 6;   // 掲示用シート：提出物IDの行（非表示）
 const BOARD_FIRST = 7;    // 掲示用シート：1番の生徒の行
@@ -176,9 +177,17 @@ function saveClasses(list) {
     });
     // 名前が変わったクラス（入れ替えにも対応するため、いったん仮の名前にする）
     const renamed = list.filter(function (c) { return c.oldName && c.oldName !== c.name; });
+    // 先にぶつかる名前がないか確かめてから変更する（途中で止まって仮の名前のシートが残らないように）
+    const leaving = renamed.map(function (c) { return c.oldName; })
+      .concat(oldNames.filter(function (n) { return keep.indexOf(n) < 0; }));
     renamed.forEach(function (c) {
+      if (ss.getSheetByName(c.name) && leaving.indexOf(c.name) < 0) throw new Error('「' + c.name + '」という名前のシートがすでにあります。別のクラス名にするか、そのシートの名前を変えてください。');
+    });
+    const tmpName = {};
+    renamed.forEach(function (c, i) {
       const sh = ss.getSheetByName(c.oldName);
-      if (sh) sh.setName('__tmp__' + c.oldName);
+      tmpName[c.oldName] = TMP_PREFIX + Date.now() + '_' + i;
+      if (sh) sh.setName(tmpName[c.oldName]);
     });
     // クラスごとの設定（メール停止・前回送信・掲示用）も新しい名前に移す
     const props = props_();
@@ -189,8 +198,7 @@ function saveClasses(list) {
     renamed.forEach(function (c) { keys.forEach(function (k) { props.deleteProperty(k + c.oldName); }); });
     moved.forEach(function (m) { m.values.forEach(function (kv) { if (kv[1] !== null) props.setProperty(kv[0] + m.name, kv[1]); }); });
     renamed.forEach(function (c) {
-      if (ss.getSheetByName(c.name)) throw new Error('同じ名前のシートがすでにあります：' + c.name);
-      const sh = ss.getSheetByName('__tmp__' + c.oldName);
+      const sh = ss.getSheetByName(tmpName[c.oldName]);
       if (sh) sh.setName(c.name);
     });
     tasks.forEach(function (t) {
@@ -246,7 +254,10 @@ function sendReminders(clsName, mails) {
       sh.getRange(1, 1, 1, 6).setValues([['送信日時', 'クラス', '番号', '宛先', '件名', '結果']]).setFontWeight('bold');
       sh.setFrozenRows(1);
     }
-    if (log.length) sh.getRange(sh.getLastRow() + 1, 1, log.length, 6).setValues(log);
+    if (log.length) {
+      sh.getRange(sh.getLastRow() + 1, 2, log.length, 1).setNumberFormat('@');
+      sh.getRange(sh.getLastRow() + 1, 1, log.length, 6).setValues(log);
+    }
   });
   let lastMail = { at: Date.now(), sent: sent };
   if (sent) props_().setProperty('lastMail:' + clsName, JSON.stringify(lastMail));
@@ -544,6 +555,9 @@ function ensureBaseSheets_() {
     t.setColumnWidth(2, 220);
     t.setFrozenRows(1);
   }
+  // 「3-6」「2/1」のようなクラス名・提出物名が日付に変換されないよう、書式なしテキストにしておく
+  s.getRange(2, 1, MAX_CLASSES, 1).setNumberFormat('@');
+  t.getRange('B:C').setNumberFormat('@');
   // 新規スプレッドシートの空の「シート1」を片付ける
   const blank = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
   if (blank && ss.getSheets().length > 2 && blank.getLastRow() === 0) ss.deleteSheet(blank);
@@ -553,19 +567,89 @@ function readSettings_() {
   const s = ss_().getSheetByName(SHEET_SETTINGS);
   const vals = s.getRange(2, 1, MAX_CLASSES, 2).getValues();
   const out = [];
-  vals.forEach(function (r) {
+  let repaired = false;
+  vals.forEach(function (r, i) {
+    // 以前の版で日付に変換されてしまったクラス名（例：「3-6」→ 3月6日）を元に戻す
+    const fixed = dateClassName_(r[0]);
+    if (fixed) {
+      repairClass_(String(r[0]), fixed);
+      s.getRange(i + 2, 1).setNumberFormat('@').setValue(fixed);
+      r[0] = fixed;
+      repaired = true;
+    }
     const name = String(r[0] || '').trim();
     if (!name) return;
     const count = Math.max(1, Math.min(MAX_STUDENTS, parseInt(r[1], 10) || 1));
     out.push({ name: name, count: count });
   });
+  if (repaired) writeTasks_(readTasks_());
   return out;
+}
+
+// 日付に変換されたクラス名なら「月-日」の形を返す（Date 型のセル、または Date を文字にしたもの）
+function dateClassName_(v) {
+  if (v instanceof Date) {
+    const tz = ss_().getSpreadsheetTimeZone();
+    return Utilities.formatDate(v, tz, 'M') + '-' + Utilities.formatDate(v, tz, 'd');
+  }
+  const m = String(v || '').match(/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{2}) \d{4} \d{2}:\d{2}:\d{2} GMT/);
+  if (!m) return null;
+  return ('JanFebMarAprMayJunJulAugSepOctNovDec'.indexOf(m[1]) / 3 + 1) + '-' + Number(m[2]);
+}
+
+// 日付の文字になったシート・設定を、正しいクラス名にまとめ直す
+function repairClass_(bad, good) {
+  const ss = ss_();
+  const names = [good, bad, TMP_PREFIX + bad];
+  const sheets = ss.getSheets().filter(function (sh) { return names.indexOf(sh.getName()) >= 0 && isClassSheet_(sh); });
+  if (sheets.length) {
+    // ✓ がいちばん多いシートを正しい名前にする。ほかは、空なら削除し、記録があれば「（古い）」を付けて残す
+    let best = sheets[0], bestN = -1;
+    sheets.forEach(function (sh) { const n = countMarks_(sh); if (n > bestN) { best = sh; bestN = n; } });
+    sheets.forEach(function (sh) {
+      if (sh === best) return;
+      if (isEmptyClassSheet_(sh)) ss.deleteSheet(sh);
+      else sh.setName(uniqueSheetName_(good + '（古い）'));
+    });
+    if (best.getName() !== good) best.setName(good);
+  }
+  const props = props_();
+  ['mailStop:', 'lastMail:', 'board:'].forEach(function (k) {
+    const v = props.getProperty(k + bad);
+    if (v !== null && props.getProperty(k + good) === null) props.setProperty(k + good, v);
+    props.deleteProperty(k + bad);
+  });
+}
+
+// ✓ も名前もメールも入っていないクラスシート
+function isEmptyClassSheet_(sh) {
+  const rows = sh.getLastRow() - 2, cols = sh.getLastColumn() - 1;
+  if (rows < 1 || cols < 1) return true;
+  return sh.getRange(3, 2, rows, cols).getValues().every(function (r) {
+    return r.every(function (v) { return String(v).trim() === ''; });
+  });
+}
+
+function countMarks_(sh) {
+  const rows = sh.getLastRow() - 2, cols = sh.getLastColumn() - 2;
+  if (rows < 1 || cols < 1) return 0;
+  return sh.getRange(3, 3, rows, cols).getValues().reduce(function (n, r) {
+    return n + r.filter(function (v) { return v === '✓'; }).length;
+  }, 0);
+}
+
+function uniqueSheetName_(base) {
+  const ss = ss_();
+  let name = base, i = 2;
+  while (ss.getSheetByName(name)) name = base + i++;
+  return name;
 }
 
 function writeSettings_(list) {
   const s = ss_().getSheetByName(SHEET_SETTINGS);
   s.getRange(2, 1, MAX_CLASSES, 2).clearContent();
-  if (list.length) s.getRange(2, 1, list.length, 2).setValues(list.map(function (c) { return [c.name, c.count]; }));
+  s.getRange(2, 1, MAX_CLASSES, 1).setNumberFormat('@');
+  if (list.length) s.getRange(2, 1, list.length, 2).setValues(list.map(function (c) { return [String(c.name), c.count]; }));
 }
 
 function readTasks_() {
@@ -577,8 +661,10 @@ function readTasks_() {
     .map(function (r) {
       return {
         id: String(r[0]).trim(),
-        name: String(r[1]).trim(),
-        classes: String(r[2] || '').split(/[、,，]/).map(function (x) { return x.trim(); }).filter(String),
+        name: r[1] instanceof Date ? Utilities.formatDate(r[1], ss_().getSpreadsheetTimeZone(), 'M/d') : String(r[1]).trim(),
+        classes: (r[2] instanceof Date ? dateClassName_(r[2]) : String(r[2] || '')).split(/[、,，]/)
+          .map(function (x) { return x.trim(); }).filter(String)
+          .map(function (x) { return dateClassName_(x) || x; }),
         told: normDate_(r[3]),
         due: normDate_(r[4]),
         created: r[5] instanceof Date ? r[5].getTime() : Number(r[5]) || 0,
@@ -592,7 +678,7 @@ function writeTasks_(tasks) {
   if (last > 1) s.getRange(2, 1, last - 1, TASK_HEADERS.length).clearContent();
   if (!tasks.length) return;
   const rows = tasks.map(function (t) { return [t.id, t.name, t.classes.join('、'), t.told, t.due, t.created]; });
-  s.getRange(2, 4, rows.length, 2).setNumberFormat('@');
+  s.getRange(2, 2, rows.length, 4).setNumberFormat('@');
   s.getRange(2, 1, rows.length, TASK_HEADERS.length).setValues(rows);
 }
 
@@ -675,7 +761,8 @@ function validateClasses_(list) {
   if (list.length > MAX_CLASSES) throw new Error('クラスは' + MAX_CLASSES + 'クラスまでです');
   const seen = {};
   return list.map(function (c) {
-    const name = String(c.name || '').trim();
+    const name = dateClassName_(c.name) || String(c.name || '').trim();
+    if (c.oldName) c.oldName = dateClassName_(c.oldName) || String(c.oldName);
     const count = parseInt(c.count, 10);
     if (!name) throw new Error('クラス名が空です');
     if (name === SHEET_SETTINGS || name === SHEET_TASKS || /[\[\]\*\?\/\\:]/.test(name)) throw new Error('「' + name + '」はクラス名に使えません');
